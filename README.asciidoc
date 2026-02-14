@@ -1,0 +1,42 @@
+= PatchMon bridge for Checkmk
+
+This repository contains a link:https://github.com/checkmk/checkmk[Checkmk^] special agent to query patch data from link:https://github.com/PatchMon/PatchMon[PatchMon^].
+The matching check plug-ins to create a _PatchMon patches_ service are provided as well. 
+Configuration via Checkmk GUI is possible for the special agent and the service.
+
+== Compatibility
+
+Currently, only Checkmk version 2.4.0 and PatchMon 1.4.x are supported.
+Support for Checkmk 2.5.0 (alpha) will be added soon.
+Do not expect support for PatchMon 1.3.7 to appear.
+
+== Installation
+
+Clone this repository, then sync the content of `_omd_root` to the root directory of your Checkmk site.
+Then restart the site with `omd restart`.
+After updating, it might be necessary to remove outdated `.pyc` files between stopping and starting the site.
+
+We are working on an MKP for link:https://exchange.checkmk.com/[exchange.checkmk.com].
+This will come sooner or later and maybe only for Checkmk 2.5.0.
+Scope and date of an MKP will depend on discussions regarding the caching mechanism used.
+
+== Configuration
+
+The core of this integration is a special agent that will be attached to the PatchMon server that already has to be configured in Checkmk before starting.
+The special agent will create an agent section with minimal statistics info, basically just telling "everything is fine".
+Of course, if this is missing, the corresponding service will go to `UNKN`, indicating problems.
+
+The host related data is omitted as link:https://docs.checkmk.com/latest/en/piggyback.html[piggyback data^], which means data that will be added to hosts of the same same if these exist.
+
+=== PatchMon self-hosted
+
+Create a host as usually and configure the agent for it.
+Since both the agent data and the data from this special agent are relevant, set the _Monitoring agents_ attribute in the host properties to _Configured API integrations and Checkmk agent_.
+
+=== PatchMon Cloud
+
+Create a host with the _Monitoring agents_ attribute in host properties set to _Configured API integrations, no Checkmk agent_.
+
+For the host(s) that will provide PatchMon data to Checkmk, create a new rule _Setup > Agents > Other integrations > Patchmon update info_.
+
+
