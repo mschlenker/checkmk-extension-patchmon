@@ -39,4 +39,12 @@ Create a host with the _Monitoring agents_ attribute in host properties set to _
 
 For the host(s) that will provide PatchMon data to Checkmk, create a new rule _Setup > Agents > Other integrations > Patchmon update info_.
 
+== Host mapping
 
+In the setting _Host name selection_ for the special agent, you decide which PatchMon host name (friendly name, host name or UUID) determines the host name to map to in Checkmk.
+Of course, this host name should already exist.
+In commercial editions of Checkmk, the dynamic configuration daemon can create hosts using the piggyback data provided by the special agent.
+
+For Checkmk Raw/Community, Mattias is working on a script working on the PatchMon REST-API providing a CSV file that can be imported by Checkmk.
+And Iby is thinking about having a _Download all hosts as CSV for Checkmk import_ in PatchMon quite soon.
+Let's see, who will be progressing faster...
