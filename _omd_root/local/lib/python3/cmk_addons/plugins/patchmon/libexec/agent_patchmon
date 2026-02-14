@@ -1,0 +1,151 @@
+#!/usr/bin/env python3
+# Shebang needed this time to find the interpreter!
+
+import requests
+import argparse
+import json
+import time
+import os
+
+from pathlib import Path
+
+# This is not versioned yet and will be moved to v1_unstable as of 2.5.0
+from cmk.utils import password_store as pw_store
+
+def prepare_cache(sanitized_host):
+    path = os.environ['HOME'] + "/tmp/patchmon/" + sanitized_host
+    tmpdir = Path(path)
+    tmpdir.mkdir(parents=True, exist_ok=True)
+    return path
+
+def retrieve_hostlist(auth, url):
+    response = requests.get(url, auth=basic)
+    j = response.json()
+    return j
+
+def get_hostlist(path, maxage, auth, url):
+    hostlist = path + "/hostlist.json"
+    if os.path.exists(hostlist):
+        if time.time() - os.path.getmtime(hostlist) < maxage:
+            with open(hostlist, "r") as file:
+                c = file.read()
+                j = json.loads(c)
+                return j
+    j = retrieve_hostlist(auth, url)
+    with open(hostlist, "w") as file:
+        file.write(json.dumps(j))
+    return j
+
+def retrieve_hoststat(auth, url):
+    response = requests.get(url, auth=basic)
+    j = response.json()
+    return j
+
+def get_all_hostsmeta(path, maxage, hostlist):
+    stats = {
+        "oldhosts": [],
+        "missinghosts": [],
+        "hostdata": {},
+        "hostsskipped": 0,
+    }
+    for h in hostlist['hosts']:
+        uuid = h['id']
+        hostjson = path + "/" + uuid + ".json"
+        if os.path.exists(hostjson):
+            fileage = time.time() - os.path.getmtime(hostjson)
+            with open(hostjson, "r") as file:
+                c = file.read()
+                j = json.loads(c)
+                j['fileage'] = fileage
+                j['maxage'] = maxage
+                stats['hostdata'][uuid] = j
+            if fileage > maxage:
+                stats['oldhosts'].append(uuid)
+        else:
+            stats['missinghosts'].append(uuid)
+    return stats
+
+def get_all_hoststats(path, maxage, maxexec, hostlist, auth, url):
+    stats = get_all_hostsmeta(path, maxage, hostlist)
+    tstart = time.time()
+    for uuid in stats['missinghosts'] + stats['oldhosts']:
+        hostjson = path + "/" + uuid + ".json"
+        if time.time() - tstart < maxexec:
+            statsurl = url.format(baseurl=args.baseurl, uuid=uuid)
+            j = retrieve_hoststat(auth, statsurl)
+            stats['hostdata'][uuid] = j
+            with open(hostjson, "w") as file:
+                file.write(json.dumps(j))
+            j['fileage'] = 0.0
+            j['maxage'] = maxage
+        else:
+            stats['hostsskipped'] += 1
+    return stats
+
+t_start = time.time()
+
+api_url = "{baseurl}/api/v1/api/hosts"
+host_url = "{baseurl}/hosts/{uuid}"
+stats_url = "{baseurl}/api/v1/api/hosts/{uuid}/stats"
+
+parser = argparse.ArgumentParser("agent_patchmon")
+parser.add_argument(
+    "--baseurl",
+    help="Specify the baseurl for your PatchMon installation.",
+)
+parser.add_argument(
+    "--secret",
+    help="Reference the ID of the secret as stored in the password store.",
+)
+parser.add_argument(
+    "--name",
+    help="Chose whether 'id', 'hostname' or 'friendly_name' should be used to create hostname",
+)
+parser.add_argument(
+    "--maxexec",
+    help="State a maximum time the special agent should take to retrieve patch details",
+)
+parser.add_argument(
+    "--list",
+    help="State the interval (in seconds) host lists should be cached before retrieving them",
+)
+parser.add_argument(
+    "--check",
+    help="State the interval (in seconds) patch info for a single hosts should stay cached before retrieving",
+)
+args = parser.parse_args()
+
+userpass = pw_store.lookup(pw_store.password_store_path(), args.secret.split(":")[0]).split(":")
+sanitized_host = args.baseurl.replace("https://", "").replace("http://", "")
+tmp_path = prepare_cache(sanitized_host)
+basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
+
+# Prepare cache and hostlist
+hosts_url = api_url.format(baseurl=args.baseurl)
+prepare_cache(sanitized_host)
+hostlist = get_hostlist(tmp_path, float(args.list), basic, hosts_url)
+
+# Now retrieve info for all hosts
+allstats = get_all_hoststats(tmp_path, float(args.check), float(args.maxexec), hostlist, basic, stats_url)
+
+for h in hostlist['hosts']:
+    print('<<<<' + h[args.name] + '>>>>')
+    print('<<<patchmon_patches>>>')
+    try:
+        allstats['hostdata'][h['id']]['url'] = host_url.format(baseurl=args.baseurl, uuid=h['id'])
+        print(allstats['hostdata'][h['id']])
+        print('<<<labels:sep(0)>>>')
+        print('{"patchmon/monitored":"true"}')
+    except KeyError:
+        print('{ "error": "No data" }')
+    print('<<<<>>>>') 
+
+t_end = time.time()
+agentstats = {
+    "hostsskipped": allstats["hostsskipped"],
+    "duration": t_end - t_start
+}
+
+print('<<<patchmon_server>>>')
+print(json.dumps(agentstats)) 
+
