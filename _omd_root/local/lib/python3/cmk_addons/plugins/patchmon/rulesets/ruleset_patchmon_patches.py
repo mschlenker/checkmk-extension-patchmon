@@ -21,6 +21,13 @@ def _parameter_form():
                 ),
                 required = True,
             ),
+            "statereboot": DictElement(
+                parameter_form = ServiceState(
+                    title = Title("Service state when reboot need is detected"),
+                    prefill = DefaultValue(ServiceState.CRIT),
+                ),
+                required = True,
+            ),
         }
     )
 

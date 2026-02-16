@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 # Shebang needed only for editors
 
-from cmk.rulesets.v1.form_specs import Password, migrate_to_password, Dictionary, DefaultValue, DictElement, FixedValue, Integer, String, TimeSpan, TimeMagnitude, CascadingSingleChoice, CascadingSingleChoiceElement
+from cmk.rulesets.v1.form_specs import Password, migrate_to_password, Dictionary, DefaultValue, DictElement, FixedValue, Integer, String, TimeSpan, TimeMagnitude, CascadingSingleChoice, CascadingSingleChoiceElement, BooleanChoice
 from cmk.rulesets.v1.rule_specs import SpecialAgent, Topic, Help, Title
+from cmk.rulesets.v1 import Label
 
 def _formspec():
     return Dictionary(
@@ -68,6 +69,13 @@ def _formspec():
                     title=Title("Maximum execution time"),
                     displayed_magnitudes=[TimeMagnitude.SECOND],
                     prefill=DefaultValue(30.0),
+                ),
+            ),
+            "reboot": DictElement(
+                required=True,
+                parameter_form=BooleanChoice(
+                    title=Title("Reboot info"),
+                    label=Label("Query if reboot is necessary"),
                 ),
             ),
         }

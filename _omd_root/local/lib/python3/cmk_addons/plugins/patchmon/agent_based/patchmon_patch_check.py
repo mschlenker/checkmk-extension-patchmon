@@ -35,9 +35,12 @@ def check_patchmon_patches(params, section):
         value = sec,
     )
     
-def check_patchmon_reboot(section):
+def check_patchmon_reboot(params, section):
+    if not "needs_reboot" in section:
+        yield Result(state=State.UNKNOWN, summary="Reboot information missing. Did someone change the special agent configuration?")
+        return
     if section['needs_reboot'] > 0:
-        yield Result(state=State.CRIT, summary="Reboot required, reason given: " + section['reboot_reason'])
+        yield Result(state=State(params['statereboot']), summary="Reboot required, reason given: " + section['reboot_reason'])
     else:
         yield Result(state=State.OK, summary="No reboot needed.")
 
@@ -51,7 +54,7 @@ check_plugin_patchmon_patches = CheckPlugin(
     service_name = "PatchMon patches",
     discovery_function = discover_patchmon_patches,
     check_function = check_patchmon_patches,
-    check_default_parameters = { "stateregular": int(State.WARN), "statesecurity": int(State.CRIT) },
+    check_default_parameters = { "stateregular": int(State.WARN), "statesecurity": int(State.CRIT), "statereboot": int(State.CRIT) },
     check_ruleset_name = "patchmon_patches",
 )
 
@@ -61,4 +64,6 @@ check_plugin_patchmon_reboot = CheckPlugin(
     service_name = "PatchMon reboot required",
     discovery_function = discover_patchmon_reboot,
     check_function = check_patchmon_reboot,
+    check_default_parameters = { "stateregular": int(State.WARN), "statesecurity": int(State.CRIT), "statereboot": int(State.CRIT) },
+    check_ruleset_name = "patchmon_patches",
 )

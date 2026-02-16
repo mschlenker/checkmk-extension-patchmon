@@ -40,6 +40,11 @@ def get_cli_arguments():
         "--check",
         help="State the interval (in seconds) patch info for a single hosts should stay cached before retrieving",
     )
+    parser.add_argument(
+        "--reboot",
+        help="If present, also query whether a reboot is required and ask for the reasons.",
+        action="store_true",
+    )
     return parser.parse_args()
 
 def validate_uuid(uuid):
@@ -122,9 +127,10 @@ def get_all_hoststats(path, maxage, maxexec, hostlist, auth, url, xurl):
             extraurl = xurl.format(baseurl=args.baseurl, uuid=uuid)
             j = retrieve_hoststat(auth, statsurl)
             # Retrieving extra data like reboot required needs another API call
-            x = retrieve_hostextra(auth, extraurl) 
-            j['needs_reboot'] = 1 if x['needs_reboot'] else 0
-            j['reboot_reason'] = x['reboot_reason']
+            if args.reboot:
+                x = retrieve_hostextra(auth, extraurl) 
+                j['needs_reboot'] = 1 if x['needs_reboot'] else 0
+                j['reboot_reason'] = x['reboot_reason']
             stats['hostdata'][uuid] = j
             with open(hostjson, "w") as file:
                 file.write(json.dumps(j))

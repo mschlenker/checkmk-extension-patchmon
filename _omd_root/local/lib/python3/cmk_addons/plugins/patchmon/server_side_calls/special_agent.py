@@ -3,7 +3,7 @@
 
 from cmk.server_side_calls.v1 import noop_parser, SpecialAgentConfig, SpecialAgentCommand
 
-def _agent_arguments(params, host_config):
+def command_function(params, host_config):
     args = [
         "--baseurl", str(params['baseurl']), 
         "--name", str(params['name'][0]),
@@ -12,11 +12,13 @@ def _agent_arguments(params, host_config):
         "--check", str(float(params['checkinterval'])),
         "--maxexec", str(float(params['maxexec'])),
     ]
+    if params["reboot"]:
+        args.append("--reboot")
     yield SpecialAgentCommand(command_arguments=args)
 
 special_agent_ometemp = SpecialAgentConfig(
     name="patchmon",
     parameter_parser=noop_parser,
-    commands_function=_agent_arguments
+    commands_function=command_function
 )
 
