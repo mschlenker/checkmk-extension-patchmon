@@ -11,6 +11,10 @@ def parse_patchmon_patches(string_table):
 
 def discover_patchmon_patches(section):
     yield Service()
+    
+def discover_patchmon_reboot(section):
+    if "needs_reboot" in section:
+        yield Service()
 
 def check_patchmon_patches(params, section):
     sec = section['security_updates']
@@ -30,6 +34,12 @@ def check_patchmon_patches(params, section):
         name = "packages_security",
         value = sec,
     )
+    
+def check_patchmon_reboot(section):
+    if section['needs_reboot'] > 0:
+        yield Result(state=State.CRIT, summary="Reboot required, reason given: " + section['reboot_reason'])
+    else:
+        yield Result(state=State.OK, summary="No reboot needed.")
 
 agent_section_patchmon_patches = AgentSection(
     name = "patchmon_patches",
@@ -42,7 +52,13 @@ check_plugin_patchmon_patches = CheckPlugin(
     discovery_function = discover_patchmon_patches,
     check_function = check_patchmon_patches,
     check_default_parameters = { "stateregular": int(State.WARN), "statesecurity": int(State.CRIT) },
-    # check_default_parameters = {}
     check_ruleset_name = "patchmon_patches",
 )
 
+check_plugin_patchmon_reboot = CheckPlugin(
+    name = "patchmon_reboot",
+    sections = [ "patchmon_patches" ],
+    service_name = "PatchMon reboot required",
+    discovery_function = discover_patchmon_reboot,
+    check_function = check_patchmon_reboot,
+)
