@@ -7,6 +7,7 @@ import json
 import time
 import os
 import re
+import hashlib
 
 from pathlib import Path
 
@@ -48,7 +49,9 @@ def validate_uuid(uuid):
 def prepare_cache():
     # A directory is created for all cached data, the baseurl is sanitized from all slashes
     # to make sure no path traversal is possible
-    sanitized_host = args.baseurl.replace("https://", "").replace("http://", "").replace("/", "_")
+    h = hashlib.sha256()
+    h.update(args.baseurl.encode("utf-8"))
+    sanitized_host = h.hexdigest()
     path = os.environ['HOME'] + "/tmp/patchmon/" + sanitized_host
     tmpdir = Path(path)
     tmpdir.mkdir(parents=True, exist_ok=True)
@@ -73,6 +76,11 @@ def get_hostlist(path, maxage, auth, url):
     return j
 
 def retrieve_hoststat(auth, url):
+    response = requests.get(url, auth=basic)
+    j = response.json()
+    return j
+    
+def retrieve_hostextra(auth, url):
     response = requests.get(url, auth=basic)
     j = response.json()
     return j
@@ -104,14 +112,19 @@ def get_all_hostsmeta(path, maxage, hostlist):
                 stats['missinghosts'].append(uuid)
     return stats
 
-def get_all_hoststats(path, maxage, maxexec, hostlist, auth, url):
+def get_all_hoststats(path, maxage, maxexec, hostlist, auth, url, xurl):
     stats = get_all_hostsmeta(path, maxage, hostlist)
     tstart = time.time()
     for uuid in stats['missinghosts'] + stats['oldhosts']:
         hostjson = path + "/" + uuid + ".json"
         if time.time() - tstart < maxexec:
             statsurl = url.format(baseurl=args.baseurl, uuid=uuid)
+            extraurl = xurl.format(baseurl=args.baseurl, uuid=uuid)
             j = retrieve_hoststat(auth, statsurl)
+            # Retrieving extra data like reboot required needs another API call
+            x = retrieve_hostextra(auth, extraurl) 
+            j['needs_reboot'] = 1 if x['needs_reboot'] else 0
+            j['reboot_reason'] = x['reboot_reason']
             stats['hostdata'][uuid] = j
             with open(hostjson, "w") as file:
                 file.write(json.dumps(j))
@@ -128,6 +141,8 @@ args = get_cli_arguments()
 api_url = "{baseurl}/api/v1/api/hosts"
 host_url = "{baseurl}/hosts/{uuid}"
 stats_url = "{baseurl}/api/v1/api/hosts/{uuid}/stats"
+extra_url = "{baseurl}/api/v1/api/hosts/{uuid}/system"
+
 userpass = pw_store.lookup(pw_store.password_store_path(), args.secret.split(":")[0]).split(":")
 tmp_path = prepare_cache()
 basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
@@ -137,7 +152,7 @@ hosts_url = api_url.format(baseurl=args.baseurl)
 hostlist = get_hostlist(tmp_path, float(args.list), basic, hosts_url)
 
 # Now retrieve info for all hosts
-allstats = get_all_hoststats(tmp_path, float(args.check), float(args.maxexec), hostlist, basic, stats_url)
+allstats = get_all_hoststats(tmp_path, float(args.check), float(args.maxexec), hostlist, basic, stats_url, extra_url)
 
 for h in hostlist['hosts']:
     print('<<<<' + h[args.name] + '>>>>')
