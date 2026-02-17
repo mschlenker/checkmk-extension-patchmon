@@ -5,8 +5,8 @@ from cmk.server_side_calls.v1 import noop_parser, SpecialAgentConfig, SpecialAge
 
 def command_function(params, host_config):
     args = [
-        "--baseurl", str(params['baseurl']), 
-        "--name", str(params['name'][0]),
+        "--baseurl", params['baseurl'].rstrip('/'), 
+        "--name", params['name'][0],
         "--secret", params['password'],
         "--list", str(float(params['listinterval'])),
         "--check", str(float(params['checkinterval'])),
