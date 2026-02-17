@@ -164,7 +164,7 @@ for h in hostlist['hosts']:
     print('<<<<' + h[args.name] + '>>>>')
     print('<<<patchmon_patches>>>')
     try:
-        allstats['hostdata'][h['id']]['url'] = host_url.format(baseurl=args.baseurl, uuid=h['id'])
+        allstats['hostdata'][h['id']]['url'] = host_url.format(baseurl=args.baseurl.rstrip('/'), uuid=h['id'])
         print(allstats['hostdata'][h['id']])
         print('<<<labels:sep(0)>>>')
         print('{"patchmon/monitored":"true"}')
