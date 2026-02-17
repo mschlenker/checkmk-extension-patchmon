@@ -13,9 +13,9 @@ For now, a parameter "max execution time" is used to effectively cut down large 
 This both prevents the special agent from running into timeouts when retrieving data for a large numbers of hosts and helps to spread the load on both the PatchMon and the Checkmk server over subsequent special agent calls.
 
 Sensible values for the "max execution time" are between 2 and 30 seconds.
-If you have 1000 hosts in your PatchMon instance for example, a  "max execution time" of 15 would lead to batches of roughly 40 to 70 hosts to be fetched in one special agent invocation.
+If you have 1000 hosts in your PatchMon instance for example, the default "max execution time" of 15 would lead to batches of roughly 40 to 70 hosts to be fetched in one special agent invocation.
 It would need 15 to 25 subsequent special agent invocations to fetch all 1000 hosts.
-This is well lower than the caching interval of 90 minutes after which the whole procedure starts again.
+This is well lower than the default caching interval of 80 minutes after which the whole procedure starts again.
 
 So, for environments up to 5000 hosts, the current implementation should work sufficiently.
 
