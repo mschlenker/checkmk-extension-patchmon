@@ -44,7 +44,13 @@ def _formspec():
             "password": DictElement(
                 required=True,
                 parameter_form=Password(
-                    title=Title("Login credentials"),
+                    title=Title("API credentials"),
+                    help_text=Help(
+                        "Specify the credentials for the PatchMon API access as colon separated "
+                        "pair of key and secret. You can copy and paste the content of the \"-u\" "
+                        "argument to the \"curl\" command that PatchMon shows when creating the "
+                        "API token." 
+                    ),
                     migrate=migrate_to_password,
                 ),
             ),
