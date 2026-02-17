@@ -1,0 +1,27 @@
+# encoding: utf-8
+= Notes on performance
+
+The special agent currently needs one (if only patch information has to be retrieved) or two (if also the reboot flag should be queried) REST-API calls to collect the required information.
+
+== Current situation
+
+This is currently done using the Python request library without modifications.
+In my test setup one of these REST-API calls currently takes between 0.1 and 0.2 seconds.
+Most of the time spent (and processor cycles wasted) is for the SSL handshake.
+
+For now, a parameter "max execution time" is used to effectively cut down large numbers of hosts to smaller batches.
+This both prevents the special agent from running into timeouts when retrieving data for a large numbers of hosts and helps to spread the load on both the PatchMon and the Checkmk server over subsequent special agent calls.
+
+Sensible values for the "max execution time" are between 2 and 30 seconds.
+If you have 1000 hosts in your PatchMon instance for example, a  "max execution time" of 15 would lead to batches of roughly 40 to 70 hosts to be fetched in one special agent invocation.
+It would need 15 to 25 subsequent special agent invocations to fetch all 1000 hosts.
+This is well lower than the caching interval of 90 minutes after which the whole procedure starts again.
+
+So, for environments up to 5000 hosts, the current implementation should work sufficiently.
+
+== Planned for the future
+
+I expect the greatest impact from introducing connection pooling.
+Even in a single thread, re-using an existing connection (and especially not having one SSL handshake per REST-API call) will greatly speed up this in some future version.
+
+Adding asynchronous calls might follow, but will greatly depend on actual user demand.
