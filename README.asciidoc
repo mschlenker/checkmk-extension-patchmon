@@ -26,6 +26,12 @@ The core of this integration is a special agent that will be attached to the Pat
 The special agent will create an agent section with minimal statistics info, basically just telling "everything is fine".
 Of course, if this is missing, the corresponding service will go to `UNKN`, indicating problems.
 
+[IMPORTANT]
+====
+Currently, some optimizations are missing.
+See my xref:performance#[notes on performance] if you want to use this extension together with four digit or higher PatchMon host counts.
+====
+
 The host related data is emitted as link:https://docs.checkmk.com/latest/en/piggyback.html[piggyback data^], which means data that will be added to hosts of the same same if these exist.
 
 === PatchMon self-hosted
