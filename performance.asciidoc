@@ -1,4 +1,4 @@
-# encoding: utf-8
+// encoding: utf-8
 = Notes on performance
 
 The special agent currently needs one (if only patch information has to be retrieved) or two (if also the reboot flag should be queried) REST-API calls to collect the required information.
