@@ -13,9 +13,17 @@ Do not expect support for PatchMon 1.3.7 to appear.
 
 == Installation
 
+=== Normal users
+
+Download the MKP from the _Releases_ section and install as described in the link:https://docs.checkmk.com/latest/en/mkps.html[Official Checkmk User Guide].
+
+=== Developers
+
 Clone this repository, then sync the content of `_omd_root` to the root directory of your Checkmk site.
 Then restart the site with `omd restart`.
 After updating, it might be necessary to remove outdated `.pyc` files between stopping and starting the site.
+
+=== Outlook
 
 We are working on an MKP for link:https://exchange.checkmk.com/[exchange.checkmk.com].
 This will come sooner or later and maybe only for Checkmk 2.5.0.
