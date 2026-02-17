@@ -49,7 +49,7 @@ def _formspec():
                         "Specify the credentials for the PatchMon API access as colon separated "
                         "pair of key and secret. You can copy and paste the content of the \"-u\" "
                         "argument to the \"curl\" command that PatchMon shows when creating the "
-                        "API token." 
+                        "API token. Only password store is supported!" 
                     ),
                     migrate=migrate_to_password,
                 ),
