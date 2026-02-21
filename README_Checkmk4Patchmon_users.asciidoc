@@ -1,0 +1,120 @@
+// encoding: utf-8
+= Checkmk for PatchMon users
+
+You are already a patchmon user and now you want to start to use Checkmk – for notification and to monitor more than just patches?
+Then this howto is for you.
+I will explain how to start with an empty Checkmk site, make everything in PatchMon visible in Checkmk and continue to show how to add more Checkmk monitoring to the hosts you started with in PatchMon.
+    
+Please note that this page is always WiP.
+Sometimes I do just upload to check how GitHub renders it.
+
+*Note:* In Checkmk, changes link:https://docs.checkmk.com/latest/en/wato.html[need to be activated] to take effect.
+So, after each step described here, you want to check the upper right corner for the yellow octagon.
+Click it and _activate pending changes_ before proceeding.
+
+== Setting up the bridge between PatchMon and Checkmk
+
+=== Create a Checkmk site
+
+Start with a Checkmk site.
+Following the link:https://docs.checkmk.com/latest/en/intro_setup.html[beginner's guide in the Official Checkmk User Guide] probably is the best way to go.
+I'd recommend to go with either Checkmk Raw (the Open Source edition) or the forever-free up to 750 services Checkmk Cloud.
+The most important difference for PatchMon users might be that the Open Source Checkmk Raw only supports pull mode for agents out of the box while Cloud also accepts push.
+However, this can be easily navigated around if necessary (I'll write a separate article on _poor people's push_ later).
+
+Currently, running Patchmon and Checkmk on a single server requires a bit of plumbing because both want to use the default HTTP(S) ports.
+More on that later.
+Make sure to add the Checkmk server as first host to be monitored.
+
+=== Create folders
+
+Create two folders: One named e.g. _PatchMonServers_ that will contain the servers, both for monitoring them and collecting data from them.
+The second one _PatchMonHosts_ for hosts that are already monitored by PatchMon.
+
+For the folder _PatchMonServers_, no changes to the defaults are necessary.
+For the folder _PatchMonHosts_ set _Checkmk agent / API integrations_ to _No API integrations, no Checkmk agent_ and finally _Piggyback_ to _Always use and expect piggyback data_.
+The field set _IP address family_ should depend on how the Checkmk server reaches the hosts known to PatchMon.
+If the majority is behind a firewall, set to _No IP_, if the majority can be reached, leave the defaults. 
+
+Here, the per folder settings are explained on the link:https://docs.checkmk.com/latest/en/hosts_setup.html[host administration page] of the User Guide.
+link:https://docs.checkmk.com/latest/en/piggyback.html[Piggyback] means that one host, here a Patchmon server will acquire monitoring data that is attached to the respective hosts.
+
+=== Install the PatchMon plug-in for Checkmk
+
+On Checkmk Raw, this has to be done link:https://docs.checkmk.com/latest/en/mkps.html#_adding_an_mkp[on the command line], with the commercial editions, MKPs also can be managed link:https://docs.checkmk.com/latest/en/mkps.html#add[from the GUI]:
+
+[source,console,subs="attributes+"]
+----
+OMD[mysite] $ mkp add /tmp/patchmon-x.y.z.mkp
+OMD[mysite] $ mkp enable patchmon
+----
+
+=== Create an access token
+
+In PatchMon, navigate to _Server > Settings > Integrations_ and create a new _Scoped Credential_ with only _GET_ permissions.
+Copy one of the `curl` commands to a temporary file.
+
+=== Export the host list
+
+In PatchMon, navigate to _Server > Settings > Integrations_ and choose _Checkmk_ to export the host list.
+Edit the host list in your favorite spread sheet program: Either remove the complete columns for _IP address_ and agent or only make the fields in these columns empty if you do not plan to add monitoring with the Checkmk agent to these hosts soon.
+
+=== Create a host for the PatchMon server
+
+In Checkmk, go to the folder _PatchMonServers_ you initially created.
+Add one host for each PatchMon server.
+In case you are using the PatchMon cloud offering or a Docker container, you will want to set _Checkmk agent / API integrations_ to _Configured API integrations, no Checkmk agent_.
+In case you are self-hosting PatchMon natively (without container) and want to add the Checkmk agent, chose _Configured API integrations and Checkmk agent_ here.
+In the latter case, continue by installing the Checkmk agent and running a service discovery as you did with the Checkmk server.
+
+=== Add the access token to the password store
+
+Click on _Setup_ and enter _Passwords_ into the search field.
+You will be presented with a single choice.
+Clicking it brings you to the _Password store_.
+There, click on _Add password_ and first decide for an ID and a name that can be easily identified.
+
+For the password, add the pair of _Key_ and _Secret_, separated by a colon.
+This is the `-u` parameter of the `curl` command you initially copied – without the quotes.
+
+=== Add the special agent to the PatchMon server
+
+Click on _Setup_ and enter _PatchMon_ into the search field.
+Of the three options presented here, choes _Other integrations > PatchMon update info_.
+Clicking it brings you to the configuration of the _PatchMon special agent_.
+There, click on _Add rule_ and configure it.
+Of course you need to fill out the _Description_, something like _Query patchmon.example.com_ will do.
+In _PatchMon connection_, fill out the base URL of your PatchMon server, for example _https://patchmon.example.com/_ and chose _API credentials > From password store_.
+Check all other fields.
+
+In _Conditions_, click _Explicit hosts_ and chose the PatchMon server you initially added in Checkmk.
+
+=== Run the service discovery
+
+Go to _Setup > Hosts_, move to your PatchMon server and click on the box icon for _Run service discovery_.
+This should now show a service _PatchMon server stats_.
+If it is missing, click the _Rescan_ button.
+
+*Note:* If you are running a larger PatchMon installation with three or four digit host numbers, the special agent will only fetch smaller batches of hosts to spread the load.
+In such cases, run `find tmp/check_mk/piggyback -type f` over the course of a few minutes, until data for all of the hosts known to PatchMon are present before proceeding.
+
+=== Import the CSV host list
+
+Now it is time to link:https://docs.checkmk.com/latest/en/hosts_setup.html#import[import the host list] into Checkmk.
+You might set the _Perform automatic service discovery_ if you import a large amount of hosts.
+If you import a smaller amount of hosts and want to add the Checkmk agent to many of those, you might skip this setting and do service discovery later.
+
+For each host present in PatchMon that has been imported to Checkmk, one or two services will be created, one service with the information on missing patches and one for required reboots.
+
+=== Configuring the service state
+
+If you want to configure the service state, for example to go already CRIT for any patches missing, go to _Setup_ and type _PatchMon_.
+Choose _Service monitoring rules > PatchMon patches_.
+Here you can create settings that override the defaults.
+Since they are stored as _rule_ they can be attached to folders, other criteria or explicit host names.
+
+== Troubleshooting
+
+As of version 0.1.0, the PatchMon special agent has nearly no crash handling.
+If you are running into problems, please file an issue.
+With version 0.1.x I will subsequently add proper exception handling.
