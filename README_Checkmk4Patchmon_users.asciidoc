@@ -36,6 +36,8 @@ For the folder _PatchMonHosts_ set _Checkmk agent / API integrations_ to _No API
 The field set _IP address family_ should depend on how the Checkmk server reaches the hosts known to PatchMon.
 If the majority is behind a firewall, set to _No IP_, if the majority can be reached, leave the defaults. 
 
+link:./images/create_folder.png[Screenshot^]
+
 Here, the per folder settings are explained on the link:https://docs.checkmk.com/latest/en/hosts_setup.html[host administration page] of the User Guide.
 link:https://docs.checkmk.com/latest/en/piggyback.html[Piggyback] means that one host, here a Patchmon server will acquire monitoring data that is attached to the respective hosts.
 
