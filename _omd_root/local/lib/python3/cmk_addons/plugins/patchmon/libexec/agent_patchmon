@@ -130,7 +130,7 @@ def get_all_hoststats(path, maxage, maxexec, hostlist, auth, url, xurl):
             if args.reboot:
                 x = retrieve_hostextra(auth, extraurl) 
                 j['needs_reboot'] = 1 if x['needs_reboot'] else 0
-                j['reboot_reason'] = x['reboot_reason']
+                j['reboot_reason'] = str(x['reboot_reason'])
             stats['hostdata'][uuid] = j
             with open(hostjson, "w") as file:
                 file.write(json.dumps(j))
