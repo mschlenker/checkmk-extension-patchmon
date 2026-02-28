@@ -48,7 +48,7 @@ def get_cli_arguments():
     )
     return parser.parse_args()
 
-def parse_uuid(raw: str) -> UUID | None:
+def parse_uuid(raw: str) -> uuid.UUID | None:
     try:
         return uuid.UUID(raw)
     except ValueError:
@@ -104,7 +104,7 @@ def get_all_hostsmeta(path, maxage, hostlist):
         uuid = h['id']
         # Validating the UUID makes sure, no crafted id field can be used to
         # read and write in the site file system
-        if (uuid := parse_uuid(h['id'])):
+        if parse_uuid(h['id']):
             hostjson = path + "/" + uuid + ".json"
             if os.path.exists(hostjson):
                 fileage = time.time() - os.path.getmtime(hostjson)
