@@ -11,7 +11,7 @@ def parse_patchmon_patches(string_table):
 
 def discover_patchmon_patches(section):
     yield Service()
-    
+
 def discover_patchmon_reboot(section):
     if "needs_reboot" in section:
         yield Service()
@@ -26,7 +26,7 @@ def check_patchmon_patches(params, section):
     ]
     if sec > 0:
         yield Result(
-            state=State(params['statesecurity']), 
+            state=State(params['statesecurity']),
             summary=messages[2].format(url=section['url'], tot=tot, sec=sec)
         )
     elif tot > 0:
@@ -47,7 +47,7 @@ def check_patchmon_patches(params, section):
         name = "packages_security",
         value = sec,
     )
-    
+
 def check_patchmon_reboot(params, section):
     if not "needs_reboot" in section:
         yield Result(

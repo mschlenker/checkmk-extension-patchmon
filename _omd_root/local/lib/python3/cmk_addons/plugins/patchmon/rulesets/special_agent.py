@@ -15,7 +15,7 @@ from cmk.rulesets.v1.form_specs import (
     CascadingSingleChoice,
     CascadingSingleChoiceElement,
     BooleanChoice
-)    
+)
 from cmk.rulesets.v1.rule_specs import (
     SpecialAgent,
     Topic,
@@ -49,7 +49,7 @@ def _formspec():
                         "Specify the credentials for the PatchMon API access as colon separated "
                         "pair of key and secret. You can copy and paste the content of the \"-u\" "
                         "argument to the \"curl\" command that PatchMon shows when creating the "
-                        "API token. Only password store is supported!" 
+                        "API token. Only password store is supported!"
                     ),
                     migrate=migrate_to_password,
                 ),
@@ -90,7 +90,7 @@ def _formspec():
                         "Declare the interval used for caching and re-fetching the host list from "
                         "Patchmon. The value specified should be lower than the PatchMon agent "
                         "reporting interval used."
-                    ), 
+                    ),
                     displayed_magnitudes=[TimeMagnitude.SECOND, TimeMagnitude.MINUTE, TimeMagnitude.HOUR],
                     prefill=DefaultValue(2100.0),
                 ),
@@ -103,7 +103,7 @@ def _formspec():
                         "Declare the interval used for caching and re-fetching the individual "
                         "host statistics from Patchmon. The value specified should be the same or "
                         "slightly higher than the PatchMon agent reporting interval used."
-                    ), 
+                    ),
                     displayed_magnitudes=[TimeMagnitude.SECOND, TimeMagnitude.MINUTE, TimeMagnitude.HOUR],
                     prefill=DefaultValue(4800.0),
                 ),
@@ -119,7 +119,7 @@ def _formspec():
                         "the requests necessary into smaller batches. Never go above 60 seconds "
                         "since this will result in special agent timeouts. Sensible values are "
                         "between 2 and 30 seconds."
-                    ), 
+                    ),
                     displayed_magnitudes=[TimeMagnitude.SECOND],
                     prefill=DefaultValue(15.0),
                 ),
