@@ -5,7 +5,8 @@ This repository contains a link:https://github.com/checkmk/checkmk[Checkmk^] spe
 The matching check plug-ins to create a _PatchMon patches_ service are provided as well. 
 Configuration via Checkmk GUI is possible for the special agent and the service.
 
-*DO NOT USE the "reboot required" setting for the special agent with 0.1.0!* Is fixed in main, will be fixed in 0.1.1.
+*DO NOT USE the "reboot required" setting for the special agent with 0.1.0!* 
+This has been fixed in 0.1.1.
 
 == Compatibility
 
