@@ -6,16 +6,22 @@ import json
 
 def parse_patchmon_server(string_table):
     flatlist = list(itertools.chain.from_iterable(string_table))
-    parsed = json.loads(" ".join(flatlist).replace("'", "\""))
+    parsed = json.loads(" ".join(flatlist).replace("'", "\\\""))
     return parsed
 
 def discover_patchmon_server(section):
     yield Service()
 
 def check_patchmon_server(section):
-    duration = section['duration']
-    yield Metric(name="elapsed_time", value=duration)
-    yield Result(state=State.OK, summary="The PatchMon server was queried in reasonable time. Data could be correctly consumed.")
+    summary = "Found {tot} hosts, {pp} still pending. The PatchMon server was queried in "\
+        "reasonable time. Data could be correctly consumed."
+    if "error" in section:
+        yield Result(state=State.CRIT, summary=section['error'])
+        return
+    else:
+        duration = section['duration']
+        yield Metric(name="elapsed_time", value=duration)
+        yield Result(state=State.OK, summary=summary.format(tot=section['hoststotal'], pp=section['hostsskipped']))
 
 agent_section_patchmon_server = AgentSection(
     name = "patchmon_server",
@@ -28,4 +34,3 @@ check_plugin_patchmon_server = CheckPlugin(
     discovery_function = discover_patchmon_server,
     check_function = check_patchmon_server,
 )
-

@@ -65,8 +65,19 @@ def prepare_cache():
     tmpdir.mkdir(parents=True, exist_ok=True)
     return path
 
+def gently_exit(error_msg):
+    agentstats = { "error": error_msg }
+    print('<<<patchmon_server>>>')
+    print(json.dumps(agentstats))
+    exit(0)
+
 def retrieve_hostlist(auth, url):
-    response = requests.get(url, auth=basic)
+    try:
+        response = requests.get(url, auth=basic)
+    except Exception as err:
+        gently_exit(str(err))
+    if response.status_code > 200:
+        gently_exit("Error retrieving host list. Got status code: " + str(response.status_code))
     j = response.json()
     return j
 
@@ -84,12 +95,26 @@ def get_hostlist(path, maxage, auth, url):
     return j
 
 def retrieve_hoststat(auth, url):
-    response = requests.get(url, auth=basic)
+    error = 'Error retrieving host statistics. Since this happened after retrieving '\
+        'the host list, this is most likely caused by an outdated version of PatchMon. '
+    try:
+        response = requests.get(url, auth=basic)
+    except Exception as err:
+        gently_exit(error + str(err))
+    if response.status_code > 200:
+        gently_exit(error + "Got status code: " + str(response.status_code))
     j = response.json()
     return j
 
 def retrieve_hostextra(auth, url):
-    response = requests.get(url, auth=basic)
+    error = 'Error retrieving host details. Since this happened after retrieving '\
+        'the host list, this is most likely caused by an outdated version of PatchMon. '
+    try:
+        response = requests.get(url, auth=basic)
+    except Exception as err:
+        gently_exit(error + str(err))
+    if response.status_code > 200:
+        gently_exit(error + "Got status code: " + str(response.status_code))
     j = response.json()
     return j
 
@@ -101,11 +126,11 @@ def get_all_hostsmeta(path, maxage, hostlist):
         "hostsskipped": 0,
     }
     for h in hostlist['hosts']:
-        uuid = h['id']
+        hostid = h['id']
         # Validating the UUID makes sure, no crafted id field can be used to
         # read and write in the site file system
         if parse_uuid(h['id']):
-            hostjson = path + "/" + uuid + ".json"
+            hostjson = path + "/" + hostid + ".json"
             if os.path.exists(hostjson):
                 fileage = time.time() - os.path.getmtime(hostjson)
                 with open(hostjson, "r") as file:
@@ -113,28 +138,28 @@ def get_all_hostsmeta(path, maxage, hostlist):
                     j = json.loads(c)
                     j['fileage'] = fileage
                     j['maxage'] = maxage
-                    stats['hostdata'][uuid] = j
+                    stats['hostdata'][hostid] = j
                 if fileage > maxage:
-                    stats['oldhosts'].append(uuid)
+                    stats['oldhosts'].append(hostid)
             else:
-                stats['missinghosts'].append(uuid)
+                stats['missinghosts'].append(hostid)
     return stats
 
 def get_all_hoststats(path, maxage, maxexec, hostlist, auth, url, xurl):
     stats = get_all_hostsmeta(path, maxage, hostlist)
     tstart = time.time()
-    for uuid in stats['missinghosts'] + stats['oldhosts']:
-        hostjson = path + "/" + uuid + ".json"
+    for hostid in stats['missinghosts'] + stats['oldhosts']:
+        hostjson = path + "/" + hostid + ".json"
         if time.time() - tstart < maxexec:
-            statsurl = url.format(baseurl=args.baseurl, uuid=uuid)
-            extraurl = xurl.format(baseurl=args.baseurl, uuid=uuid)
+            statsurl = url.format(baseurl=args.baseurl, uuid=hostid)
+            extraurl = xurl.format(baseurl=args.baseurl, uuid=hostid)
             j = retrieve_hoststat(auth, statsurl)
             # Retrieving extra data like reboot required needs another API call
             if args.reboot:
-                x = retrieve_hostextra(auth, extraurl) 
+                x = retrieve_hostextra(auth, extraurl)
                 j['needs_reboot'] = 1 if x['needs_reboot'] else 0
                 j['reboot_reason'] = str(x['reboot_reason'])
-            stats['hostdata'][uuid] = j
+            stats['hostdata'][hostid] = j
             with open(hostjson, "w") as file:
                 file.write(json.dumps(j))
             j['fileage'] = 0.0
@@ -177,6 +202,7 @@ for h in hostlist['hosts']:
 
 t_end = time.time()
 agentstats = {
+    "hoststotal": len(hostlist['hosts']),
     "hostsskipped": allstats["hostsskipped"],
     "duration": t_end - t_start
 }
