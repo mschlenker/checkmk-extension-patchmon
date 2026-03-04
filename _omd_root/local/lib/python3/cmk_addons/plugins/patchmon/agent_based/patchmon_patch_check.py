@@ -22,7 +22,7 @@ def check_patchmon_patches(params, section):
     messages = [
         "No updates are missing. View on PatchMon: {url}.",
         "{tot} updates missing. View on PatchMon: {url}.",
-        "{sec} important security updates missing ({tot}  total)! View on PatchMon: {url}."
+        "{sec} important security updates missing ({tot}  total)! View on PatchMon: {url}"
     ]
     if sec > 0:
         yield Result(
