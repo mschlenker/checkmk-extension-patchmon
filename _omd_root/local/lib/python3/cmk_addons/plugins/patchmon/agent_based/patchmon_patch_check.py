@@ -20,8 +20,8 @@ def check_patchmon_patches(params, section):
     sec = section['security_updates']
     tot = section['outdated_packages']
     messages = [
-        "No updates are missing. View on PatchMon: {url}.",
-        "{tot} updates missing. View on PatchMon: {url}.",
+        "No updates are missing. View on PatchMon: {url}",
+        "{tot} updates missing. View on PatchMon: {url}",
         "{sec} important security updates missing ({tot}  total)! View on PatchMon: {url}"
     ]
     if sec > 0:
