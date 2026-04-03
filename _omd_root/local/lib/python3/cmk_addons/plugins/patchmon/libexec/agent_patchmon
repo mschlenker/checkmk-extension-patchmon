@@ -15,6 +15,13 @@ from pathlib import Path
 # This is not versioned yet and will be moved to v1_unstable as of 2.5.0
 from cmk.utils import password_store as pw_store
 
+# The new storage API is available starting with 2.5.0
+try:
+    from cmk.server_side_programs.v1_unstable import Storage
+except ModuleNotFoundError:
+    # Silently ignore
+    True
+
 def get_cli_arguments():
     parser = argparse.ArgumentParser("agent_patchmon")
     parser.add_argument(
@@ -54,11 +61,11 @@ def parse_uuid(raw: str) -> uuid.UUID | None:
     except ValueError:
         return None
 
-def prepare_cache():
+def prepare_cache(keyid):
     # A directory is created for all cached data, the baseurl is sanitized from all slashes
     # to make sure no path traversal is possible
     h = hashlib.sha256()
-    h.update(args.baseurl.encode("utf-8"))
+    h.update(keyid.encode("utf-8"))
     sanitized_host = h.hexdigest()
     path = os.environ['OMD_ROOT'] + "/tmp/patchmon/" + sanitized_host
     tmpdir = Path(path)
@@ -81,7 +88,7 @@ def retrieve_hostlist(auth, url):
     j = response.json()
     return j
 
-def get_hostlist(path, maxage, auth, url):
+def get_hostlist_from_fs(auth, url, maxage, path):
     hostlist = path + "/hostlist.json"
     if os.path.exists(hostlist):
         if time.time() - os.path.getmtime(hostlist) < maxage:
@@ -93,6 +100,20 @@ def get_hostlist(path, maxage, auth, url):
     with open(hostlist, "w") as file:
         file.write(json.dumps(j))
     return j
+    
+def get_hostlist_from_storage(auth, url, maxage, storage):
+    jstr = storage.read("hostlist", None)
+    if jstr:
+        return json.loads(jstr)
+    j = retrieve_hostlist(auth, url)
+    storage.write("hostlist", json.dumps(j))
+    return j
+
+def get_hostlist(auth, url, maxage, storage, path):
+    if storage:
+        return get_hostlist_from_storage(auth, url, maxage, storage)
+    else:
+        return get_hostlist_from_fs(auth, url, maxage, path)
 
 def retrieve_hoststat(auth, url):
     error = 'Error retrieving host statistics. Since this happened after retrieving '\
@@ -118,7 +139,7 @@ def retrieve_hostextra(auth, url):
     j = response.json()
     return j
 
-def get_all_hostsmeta(path, maxage, hostlist):
+def get_all_hostsmeta_from_fs(hostlist, maxage, path):
     stats = {
         "oldhosts": [],
         "missinghosts": [],
@@ -129,7 +150,7 @@ def get_all_hostsmeta(path, maxage, hostlist):
         hostid = h['id']
         # Validating the UUID makes sure, no crafted id field can be used to
         # read and write in the site file system
-        if parse_uuid(h['id']):
+        if parse_uuid(hostid):
             hostjson = path + "/" + hostid + ".json"
             if os.path.exists(hostjson):
                 fileage = time.time() - os.path.getmtime(hostjson)
@@ -144,9 +165,32 @@ def get_all_hostsmeta(path, maxage, hostlist):
             else:
                 stats['missinghosts'].append(hostid)
     return stats
+    
+def get_all_hostsmeta_from_storage(hostlist, maxage, storage):
+    stats = {
+        "oldhosts": [],
+        "missinghosts": [],
+        "hostdata": {},
+        "hostsskipped": 0,
+    }
+    for h in hostlist['hosts']:
+        hostid = h['id']
+        if parse_uuid(hostid):
+            jsdata = storage.read(hostid, None)
+            if jsdata:
+                j = json.loads(jsdata)
+                fileage = time.time() - j['timestamp']
+                j['fileage'] = fileage
+                j['maxage'] = maxage
+                stats['hostdata'][hostid] = j
+                if fileage > maxage:
+                    stats['oldhosts'].append(hostid)
+        else:
+            stats['missinghosts'].append(hostid)
+    return stats
 
-def get_all_hoststats(path, maxage, maxexec, hostlist, auth, url, xurl):
-    stats = get_all_hostsmeta(path, maxage, hostlist)
+def get_all_hoststats_from_fs(auth, url, xurl, hostlist, maxage, maxexec, path):
+    stats = get_all_hostsmeta_from_fs(hostlist, maxage, path)
     tstart = time.time()
     for hostid in stats['missinghosts'] + stats['oldhosts']:
         hostjson = path + "/" + hostid + ".json"
@@ -167,6 +211,34 @@ def get_all_hoststats(path, maxage, maxexec, hostlist, auth, url, xurl):
         else:
             stats['hostsskipped'] += 1
     return stats
+    
+def get_all_hoststats_from_storage(auth, url, xurl, hostlist, maxage, maxexec, storage):
+    stats = get_all_hostsmeta_from_storage(hostlist, maxage, storage)
+    tstart = time.time()
+    for hostid in stats['missinghosts'] + stats['oldhosts']:
+        if time.time() - tstart < maxexec:
+            statsurl = url.format(baseurl=args.baseurl, uuid=hostid)
+            extraurl = xurl.format(baseurl=args.baseurl, uuid=hostid)
+            j = retrieve_hoststat(auth, statsurl)
+            # Retrieving extra data like reboot required needs another API call
+            if args.reboot:
+                x = retrieve_hostextra(auth, extraurl)
+                j['needs_reboot'] = 1 if x['needs_reboot'] else 0
+                j['reboot_reason'] = str(x['reboot_reason'])
+            stats['hostdata'][hostid] = j
+            j['timestamp'] = time.time()
+            storage.write(hostid, json.dumps(j))
+            j['fileage'] = 0.0
+            j['maxage'] = maxage
+        else:
+            stats['hostsskipped'] += 1
+    return stats
+
+def get_all_hoststats(auth, url, xurl, hostlist, maxage, maxexec, storage, path):
+    if storage:
+        return get_all_hoststats_from_storage(auth, url, xurl, hostlist, maxage, maxexec, storage)
+    else:
+        return get_all_hoststats_from_fs(auth, url, xurl, hostlist, maxage, maxexec, path)
 
 t_start = time.time()
 
@@ -178,15 +250,30 @@ stats_url = "{baseurl}/api/v1/api/hosts/{uuid}/stats"
 extra_url = "{baseurl}/api/v1/api/hosts/{uuid}/system"
 
 userpass = pw_store.lookup(pw_store.password_store_path(), args.secret.split(":")[0]).split(":")
-tmp_path = prepare_cache()
 basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
+
+# The user identifier is randomly generated and thus should be globally unique.
+# Since PatchMon host groups might be associated with this identifier, using it
+# as identifier for the Storage means we do not need to pass a hostname. It also
+# Prevents problems from using the same baseurl (potentially with different host
+# groups).
+#
+# Since the same problem occurs for the hacky caching, use this key instead of
+# baseurl:
+
+try:
+    stor = Storage('patchmon', userpass[0])
+    tmp_path = None
+except NameError:
+    stor = None
+    tmp_path = prepare_cache(userpass[0])
 
 # First retrieve the host list
 hosts_url = api_url.format(baseurl=args.baseurl)
-hostlist = get_hostlist(tmp_path, float(args.list), basic, hosts_url)
+hostlist = get_hostlist(basic, hosts_url, float(args.list), stor, tmp_path)
 
 # Now retrieve info for all hosts
-allstats = get_all_hoststats(tmp_path, float(args.check), float(args.maxexec), hostlist, basic, stats_url, extra_url)
+allstats = get_all_hoststats(basic, stats_url, extra_url, hostlist, float(args.check), float(args.maxexec), stor, tmp_path)
 
 for h in hostlist['hosts']:
     print('<<<<' + h[args.name] + '>>>>')
