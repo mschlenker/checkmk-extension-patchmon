@@ -54,6 +54,7 @@ def get_cli_arguments():
         action="store_true",
     )
     try:
+        # Try the 2.5.0 helper:
         parser_add_secret_option(
             parser,
             short="-s",
@@ -62,6 +63,7 @@ def get_cli_arguments():
             required=True
         )
     except NameError:
+        # Fall back to manually adding:
         parser.add_argument(
             "--secret-id",
             help="Reference the ID of the secret as stored in the password store.",
@@ -265,7 +267,12 @@ extra_url = "{baseurl}/api/v1/api/hosts/{uuid}/system"
 try:
     # This is strange, ask Moritz or Simon how to proceed here!
     pwid = resolve_secret_option(args, "secret").reveal()
-    userpass = dereference_secret(pwid).reveal().split(":")
+    # If this fails somehow, assume we got a clear text password...
+    try:
+        userpass = dereference_secret(pwid).reveal().split(":")
+    except:
+        userpass = pwid.split(":")
+    # Someone has to write documentation on the new password store API...
 except NameError:
     userpass = legacy_pw_store.lookup(legacy_pw_store.password_store_path(), args.secret_id.split(":")[0]).split(":")
     
@@ -278,7 +285,7 @@ basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
 # groups).
 #
 # Since the same problem occurs for the hacky caching, use this key instead of
-# baseurl:
+# baseurl from now on.
 
 try:
     stor = Storage('patchmon', userpass[0])
