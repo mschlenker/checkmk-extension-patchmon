@@ -7,7 +7,7 @@ def command_function(params, host_config):
     args = [
         "--baseurl", params['baseurl'].rstrip('/'),
         "--name", params['name'][0],
-        "--secret", params['password'],
+        "--secret-id", params['password'],
         "--list", str(float(params['listinterval'])),
         "--check", str(float(params['checkinterval'])),
         "--maxexec", str(float(params['maxexec'])),

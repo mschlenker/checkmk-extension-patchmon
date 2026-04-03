@@ -12,9 +12,13 @@ import uuid
 
 from pathlib import Path
 
-# This is not versioned yet and will be moved to v1_unstable as of 2.5.0
-from cmk.utils import password_store as pw_store
-
+# The new password store API is available starting with 2.5.0
+try:
+    from cmk.password_store.v1_unstable import Secret, parser_add_secret_option, resolve_secret_option, dereference_secret
+except ModuleNotFoundError:
+    # Just use the old one if importing the new one fails...
+    from cmk.utils import password_store as legacy_pw_store
+    
 # The new storage API is available starting with 2.5.0
 try:
     from cmk.server_side_programs.v1_unstable import Storage
@@ -27,10 +31,6 @@ def get_cli_arguments():
     parser.add_argument(
         "--baseurl",
         help="Specify the baseurl for your PatchMon installation.",
-    )
-    parser.add_argument(
-        "--secret",
-        help="Reference the ID of the secret as stored in the password store.",
     )
     parser.add_argument(
         "--name",
@@ -53,6 +53,19 @@ def get_cli_arguments():
         help="If present, also query whether a reboot is required and ask for the reasons.",
         action="store_true",
     )
+    try:
+        parser_add_secret_option(
+            parser,
+            short="-s",
+            long="--secret",
+            help="Reference the ID of the secret as stored in the password store or pass key:pass pair.",
+            required=True
+        )
+    except NameError:
+        parser.add_argument(
+            "--secret-id",
+            help="Reference the ID of the secret as stored in the password store.",
+        )
     return parser.parse_args()
 
 def parse_uuid(raw: str) -> uuid.UUID | None:
@@ -249,7 +262,13 @@ host_url = "{baseurl}/hosts/{uuid}"
 stats_url = "{baseurl}/api/v1/api/hosts/{uuid}/stats"
 extra_url = "{baseurl}/api/v1/api/hosts/{uuid}/system"
 
-userpass = pw_store.lookup(pw_store.password_store_path(), args.secret.split(":")[0]).split(":")
+try:
+    # This is strange, ask Moritz or Simon how to proceed here!
+    pwid = resolve_secret_option(args, "secret").reveal()
+    userpass = dereference_secret(pwid).reveal().split(":")
+except NameError:
+    userpass = legacy_pw_store.lookup(legacy_pw_store.password_store_path(), args.secret_id.split(":")[0]).split(":")
+    
 basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
 
 # The user identifier is randomly generated and thus should be globally unique.
