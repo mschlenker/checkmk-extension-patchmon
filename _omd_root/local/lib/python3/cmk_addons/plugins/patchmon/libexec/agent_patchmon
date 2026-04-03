@@ -200,8 +200,8 @@ def get_all_hostsmeta_from_storage(hostlist, maxage, storage):
                 stats['hostdata'][hostid] = j
                 if fileage > maxage:
                     stats['oldhosts'].append(hostid)
-        else:
-            stats['missinghosts'].append(hostid)
+            else:
+                stats['missinghosts'].append(hostid)
     return stats
 
 def get_all_hoststats_from_fs(auth, url, xurl, hostlist, maxage, maxexec, path):
