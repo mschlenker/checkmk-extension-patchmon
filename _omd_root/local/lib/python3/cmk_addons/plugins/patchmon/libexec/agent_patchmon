@@ -59,7 +59,7 @@ def get_cli_arguments():
             parser,
             short="-s",
             long="--secret",
-            help="Reference the ID of the secret as stored in the password store or pass key:pass pair.",
+            help="Specify the id:token to log in to PatchMon.",
             required=True
         )
     except NameError:
@@ -67,6 +67,11 @@ def get_cli_arguments():
         parser.add_argument(
             "--secret-id",
             help="Reference the ID of the secret as stored in the password store.",
+        )
+        # Fall back to manually adding:
+        parser.add_argument(
+            "--secret",
+            help="Specify the id:token to log in to PatchMon.",
         )
     return parser.parse_args()
 
