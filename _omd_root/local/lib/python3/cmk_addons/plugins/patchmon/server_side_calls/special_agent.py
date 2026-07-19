@@ -14,6 +14,8 @@ def command_function(params, host_config):
     ]
     if params["reboot"]:
         args.append("--reboot")
+    if params["grace"]:
+        args.append("--grace")
     yield SpecialAgentCommand(command_arguments=args)
 
 special_agent_ometemp = SpecialAgentConfig(

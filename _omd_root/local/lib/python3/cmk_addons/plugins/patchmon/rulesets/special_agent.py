@@ -137,6 +137,18 @@ def _formspec():
                     ),
                 ),
             ),
+            "grace": DictElement(
+                required=True,
+                parameter_form=BooleanChoice(
+                    title=Title("Package list for grace periods"),
+                    label=Label("Query the package list as well"),
+                    help_text=Help(
+                        "Enable this option to also create a package list. This is needed in case "
+                        "you want to use the \"grace period\" option in the check plugin. It adds "
+                        "one API call for each host that has packages pending."
+                    ),
+                ),
+            ),
         }
     )
 
