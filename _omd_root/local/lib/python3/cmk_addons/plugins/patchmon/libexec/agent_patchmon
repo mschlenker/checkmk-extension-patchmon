@@ -260,6 +260,23 @@ def get_all_hoststats(auth, url, xurl, hostlist, maxage, maxexec, storage, path)
     else:
         return get_all_hoststats_from_fs(auth, url, xurl, hostlist, maxage, maxexec, path)
 
+def get_access_token(args):
+    userpass = None
+    try:
+        # The 2.5 method first: Checkmk cares for differentiating between plain password and store reference
+        userpass = resolve_secret_option(args, "secret").reveal().split(":")
+        return userpass
+    except:
+        # We have Checkmk 2.4 or 2.3 where the password store is an internal API
+        # Here we have to differentiate between the two possible parameters
+        if args.secret_id:
+            store_reference = args.secret_id.split(":")[0]
+            userpass = legacy_pw_store.lookup(legacy_pw_store.password_store_path(), store_reference).split(":")
+            return userpass
+        else:
+            userpass = args.secret.split(":")
+            return userpass
+
 t_start = time.time()
 
 args = get_cli_arguments()
@@ -269,18 +286,7 @@ host_url = "{baseurl}/hosts/{uuid}"
 stats_url = "{baseurl}/api/v1/api/hosts/{uuid}/stats"
 extra_url = "{baseurl}/api/v1/api/hosts/{uuid}/system"
 
-try:
-    # This is strange, ask Moritz or Simon how to proceed here!
-    pwid = resolve_secret_option(args, "secret").reveal()
-    # If this fails somehow, assume we got a clear text password...
-    try:
-        userpass = dereference_secret(pwid).reveal().split(":")
-    except:
-        userpass = pwid.split(":")
-    # Someone has to write documentation on the new password store API...
-except NameError:
-    userpass = legacy_pw_store.lookup(legacy_pw_store.password_store_path(), args.secret_id.split(":")[0]).split(":")
-    
+userpass = get_access_token(args)    
 basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
 
 # The user identifier is randomly generated and thus should be globally unique.
