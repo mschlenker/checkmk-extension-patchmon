@@ -3,6 +3,7 @@
 from cmk.agent_based.v2 import AgentSection, CheckPlugin, Service, Result, State, Metric, check_levels
 import itertools
 import json
+import time
 
 def parse_patchmon_patches(string_table):
     flatlist = list(itertools.chain.from_iterable(string_table))
@@ -22,23 +23,10 @@ def check_patchmon_patches(params, section):
     messages = [
         "No updates are missing. View on PatchMon: {url}",
         "{tot} updates missing. View on PatchMon: {url}",
-        "{sec} important security updates missing ({tot}  total)! View on PatchMon: {url}"
+        "{sec} important security updates missing ({tot}  total)! View on PatchMon: {url}",
+        "{tot_beyond_grace} updates are beyond grace time.",
+        "{sec_beyond_grace} security updates are beyond grace time.",
     ]
-    if sec > 0:
-        yield Result(
-            state=State(params['statesecurity']),
-            summary=messages[2].format(url=section['url'], tot=tot, sec=sec)
-        )
-    elif tot > 0:
-        yield Result(
-            state=State(params['stateregular']),
-            summary=messages[1].format(url=section['url'], tot=tot)
-        )
-    else:
-        yield Result(
-            state=State.OK,
-            summary=messages[0].format(url=section['url'])
-        )
     yield Metric(
         name = "packages_outdated",
         value = tot,
@@ -47,6 +35,54 @@ def check_patchmon_patches(params, section):
         name = "packages_security",
         value = sec,
     )
+    if len(list(section['packages'].keys())) > 0:
+        # Check whether we have patch details:
+        t_now = time.time()
+        sec_beyond_grace = 0
+        tot_beyond_grace = 0
+        if sec > 0:
+            yield Result(
+                state=State.OK,
+                summary=messages[2].format(url=section['url'], tot=tot, sec=sec)
+            )
+        elif tot > 0:
+            yield Result(
+                state=State.OK,
+                summary=messages[1].format(url=section['url'], tot=tot)
+            )
+        for p in section['packages']:
+            if params['grace_normal'] + section['packages'][p]['first_seen'] < t_now:
+                tot_beyond_grace += 1
+            if params['grace_security'] + section['packages'][p]['first_seen'] < t_now:
+                sec_beyond_grace += 1
+        if sec_beyond_grace > 0:
+            yield Result(
+                state=State(params['statesecurity']),
+                summary=messages[4].format(sec_beyond_grace=sec_beyond_grace)
+            )
+        elif tot_beyond_grace > 0:
+            yield Result(
+                state=State(params['stateregular']),
+                summary=messages[3].format(tot_beyond_grace=tot_beyond_grace)
+            )
+    else:
+        # No patch details? Let's just work on the number of patches:
+        if sec > 0:
+            yield Result(
+                state=State(params['statesecurity']),
+                summary=messages[2].format(url=section['url'], tot=tot, sec=sec)
+            )
+        elif tot > 0:
+            yield Result(
+                state=State(params['stateregular']),
+                summary=messages[1].format(url=section['url'], tot=tot)
+            )
+        else:
+            yield Result(
+                state=State.OK,
+                summary=messages[0].format(url=section['url'])
+            )
+
 
 def check_patchmon_reboot(params, section):
     if not "needs_reboot" in section:
