@@ -116,8 +116,10 @@ check_plugin_patchmon_patches = CheckPlugin(
         "stateregular": int(State.WARN), 
         "statesecurity": int(State.CRIT), 
         "statereboot": int(State.CRIT),
-        "grace_normal": 0.0,
-        "grace_security": 0.0,
+        "use_grace": {
+            "grace_normal": 0.0,
+            "grace_security": 0.0,
+        },
     },
     check_ruleset_name = "patchmon_patches",
 )
@@ -132,8 +134,10 @@ check_plugin_patchmon_reboot = CheckPlugin(
         "stateregular": int(State.WARN), 
         "statesecurity": int(State.CRIT), 
         "statereboot": int(State.CRIT),
-        "grace_normal": 0.0,
-        "grace_security": 0.0,
+        "use_grace": {
+            "grace_normal": 0.0,
+            "grace_security": 0.0,
+        },
     },
     check_ruleset_name = "patchmon_patches",
 )
