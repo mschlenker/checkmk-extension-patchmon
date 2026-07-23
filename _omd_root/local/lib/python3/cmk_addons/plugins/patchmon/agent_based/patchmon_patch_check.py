@@ -35,7 +35,7 @@ def check_patchmon_patches(params, section):
         name = "packages_security",
         value = sec,
     )
-    if section['packages'] and len(list(section['packages'].keys())) > 0 and params['use_grace']:
+    if 'use_grace' in params and 'packages' in section and len(list(section['packages'].keys())) > 0:
         # Check whether we have patch details:
         t_now = time.time()
         sec_beyond_grace = 0
