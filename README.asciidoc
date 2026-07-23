@@ -7,7 +7,7 @@ Configuration via Checkmk GUI is possible for the special agent and the service.
 
 == Compatibility
 
-Currently, Checkmk version 2.3.0 to 2.5.0 and PatchMon 1.4.x are supported.
+Currently, Checkmk version 2.3.0 to 2.5.0 and PatchMon 1.4.x and 2.0.x are supported.
 Support for Checkmk 2.5.0 is beta since this is my first take on playing with the new link:https://docs.checkmk.com/plugin-api/2.5.0/cmk.server_side_programs/index.html#cmk.server_side_programs.v1_unstable.Storage[storage API^].
 Do not expect support for PatchMon 1.3.7 to appear.
 
@@ -64,4 +64,4 @@ In the setting _Host name selection_ for the special agent, you decide which Pat
 Of course, this host name should already exist.
 In commercial editions of Checkmk, the dynamic configuration daemon can create hosts using the piggyback data provided by the special agent.
 
-For Checkmk Raw/Community, with PatchMon 1.4.2, Iby has added the possibility to download a CSV list of the hosts present in PatchMon for easy import in Checkmk.
+For Checkmk Raw/Community, starting with PatchMon 1.4.2, Iby has added the possibility to download a CSV list of the hosts present in PatchMon for easy import in Checkmk.
