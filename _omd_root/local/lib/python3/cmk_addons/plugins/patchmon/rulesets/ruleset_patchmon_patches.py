@@ -9,12 +9,14 @@ from cmk.rulesets.v1.form_specs import (
     Dictionary,
     TimeSpan,
     TimeMagnitude,
+    DictGroup,
 )
 from cmk.rulesets.v1.rule_specs import (
     CheckParameters,
     HostAndItemCondition,
     Topic
 )
+
 
 def _parameter_form():
     return Dictionary(
@@ -57,35 +59,37 @@ def _parameter_form():
                 ),
                 required = True,
             ),
-            "grace_normal": DictElement(
-                parameter_form = TimeSpan(
-                    title = Title("Grace period (regular updates)"),
-                    displayed_magnitudes=[TimeMagnitude.SECOND, TimeMagnitude.MINUTE, TimeMagnitude.HOUR],
+            "use_grace": DictElement(
+                parameter_form = Dictionary(
+                    title = Title("Grace periods"),
                     help_text = Help(
-                        "Specify a grace period for regular updates. Use this in case you have automatic "
+                        "Specify grace periods for updates. Use this in case you have automatic "
                         "updates configured and only want to get nagged when one of these likely failed "
-                        "after the default interval. For example, you might want to set this to 26 hours "
-                        "if you have configured daily updates. "
+                        "after the default interval. For example, you might want to set the grace "
+                        "period for normal updates to 26 hours if you have configured daily updates. "
                         "Using this option relies on the package list that is only queried when the similar "
                         "option in the special agent rule is configured."
                     ),
-                    prefill=DefaultValue(0.0),
+                    elements = {
+                        "grace_normal": DictElement(
+                            parameter_form = TimeSpan(
+                                title = Title("Regular updates"),
+                                displayed_magnitudes=[TimeMagnitude.SECOND, TimeMagnitude.MINUTE, TimeMagnitude.HOUR],
+                                prefill=DefaultValue(0.0),
+                            ),
+                            required = True,
+                        ),
+                        "grace_security": DictElement(
+                            parameter_form = TimeSpan(
+                                title = Title("Security updates"),
+                                displayed_magnitudes=[TimeMagnitude.SECOND, TimeMagnitude.MINUTE, TimeMagnitude.HOUR],
+                                prefill=DefaultValue(0.0),
+                            ),
+                            required = True,
+                        ),
+                    },
                 ),
-                required = True,
-            ),
-            "grace_security": DictElement(
-                parameter_form = TimeSpan(
-                    title = Title("Grace period (security updates)"),
-                    displayed_magnitudes=[TimeMagnitude.SECOND, TimeMagnitude.MINUTE, TimeMagnitude.HOUR],
-                    help_text = Help(
-                        "Specify a grace period for security updates. Use this in case you have automatic "
-                        "updates configured and only want to get nagged when one of these likely failed. "
-                        "Using this option relies on the package list that is only queried when the similar "
-                        "option in the special agent rule is configured."
-                    ),
-                    prefill=DefaultValue(0.0),
-                ),
-                required = True,
+                required = False,
             ),
         }
     )

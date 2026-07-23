@@ -125,7 +125,7 @@ def _formspec():
                 ),
             ),
             "reboot": DictElement(
-                required=True,
+                required=False,
                 parameter_form=BooleanChoice(
                     title=Title("Reboot info"),
                     label=Label("Query if reboot is necessary"),
@@ -138,7 +138,7 @@ def _formspec():
                 ),
             ),
             "grace": DictElement(
-                required=True,
+                required=False,
                 parameter_form=BooleanChoice(
                     title=Title("Package list for grace periods"),
                     label=Label("Query the package list as well"),

@@ -35,7 +35,7 @@ def check_patchmon_patches(params, section):
         name = "packages_security",
         value = sec,
     )
-    if len(list(section['packages'].keys())) > 0:
+    if section['packages'] and len(list(section['packages'].keys())) > 0 and params['use_grace']:
         # Check whether we have patch details:
         t_now = time.time()
         sec_beyond_grace = 0
@@ -51,9 +51,9 @@ def check_patchmon_patches(params, section):
                 summary=messages[1].format(url=section['url'], tot=tot)
             )
         for p in section['packages']:
-            if params['grace_normal'] + section['packages'][p]['first_seen'] < t_now:
+            if params['use_grace']['grace_normal'] + section['packages'][p]['first_seen'] < t_now:
                 tot_beyond_grace += 1
-            if params['grace_security'] + section['packages'][p]['first_seen'] < t_now:
+            if params['use_grace']['grace_security'] + section['packages'][p]['first_seen'] < t_now:
                 sec_beyond_grace += 1
         if sec_beyond_grace > 0:
             yield Result(
