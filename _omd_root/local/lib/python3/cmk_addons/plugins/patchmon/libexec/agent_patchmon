@@ -40,7 +40,7 @@ def get_cli_arguments():
     )
     parser.add_argument(
         "--name",
-        help="Chose whether 'id', 'hostname' or 'friendly_name' should be used to create hostname.",
+        help="Chose whether 'id', 'hostname' or 'friendly_name' should be used to create hostname. Default is 'friendly_name'.",
     )
     parser.add_argument(
         # Only makes sense when used as Checkmk special agent with piggyback mode 
@@ -49,11 +49,11 @@ def get_cli_arguments():
     )
     parser.add_argument(
         "--list",
-        help="State the interval (in seconds) host lists should be cached before retrieving them. Default is 1800s, ±10% are randomly applied to avoid conflicts from parallel calls.",
+        help='State the interval (in seconds) host lists should be cached before retrieving them. Default is 1800s, +/-10 percent are randomly applied to avoid conflicts from parallel calls.',
     )
     parser.add_argument(
         "--check",
-        help="State the interval (in seconds) patch info for a single hosts should stay cached before retrieving. Default is 1800s, ±10% are randomly applied to avoid conflicts from parallel calls.",
+        help='State the interval (in seconds) patch info for a single hosts should stay cached before retrieving. Default is 1800s, +/-10 percent are randomly applied to avoid conflicts from parallel calls.',
     )
     parser.add_argument(
         "--reboot",
