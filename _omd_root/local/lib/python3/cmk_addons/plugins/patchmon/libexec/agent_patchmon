@@ -12,12 +12,17 @@ import uuid
 
 from pathlib import Path
 
+# Make sure this script can be run from Checkmk 2.3.0 onwards and as active check without Checkmk APIs
 # The new password store API is available starting with 2.5.0
 try:
     from cmk.password_store.v1_unstable import Secret, parser_add_secret_option, resolve_secret_option, dereference_secret
 except ModuleNotFoundError:
     # Just use the old one if importing the new one fails...
-    from cmk.utils import password_store as legacy_pw_store
+    try:
+        from cmk.utils import password_store as legacy_pw_store
+    except ModuleNotFoundError:
+        # Silently ignore
+        True
     
 # The new storage API is available starting with 2.5.0
 try:
@@ -37,16 +42,17 @@ def get_cli_arguments():
         help="Chose whether 'id', 'hostname' or 'friendly_name' should be used to create hostname.",
     )
     parser.add_argument(
+        # Only makes sense when used as Checkmk special agent with piggyback mode 
         "--maxexec",
-        help="State a maximum time the special agent should take to retrieve patch details.",
+        help="State a maximum time the special agent should take to retrieve patch details. Default is 30s. Irrelevant when querying a single host.",
     )
     parser.add_argument(
         "--list",
-        help="State the interval (in seconds) host lists should be cached before retrieving them.",
+        help="State the interval (in seconds) host lists should be cached before retrieving them. Default is 1800s.",
     )
     parser.add_argument(
         "--check",
-        help="State the interval (in seconds) patch info for a single hosts should stay cached before retrieving.",
+        help="State the interval (in seconds) patch info for a single hosts should stay cached before retrieving. Default is 1800s.",
     )
     parser.add_argument(
         "--reboot",
@@ -58,6 +64,24 @@ def get_cli_arguments():
         help="Get the package list for being able to create a grace period in the check plugin.",
         action="store_true",
     )
+    parser.add_argument(
+        "--monitoring-plugin",
+        help="Behave as monitoring plug-in for Nagios and related systems like Icinga.",
+        action="store_true",
+    ),
+    parser.add_argument(
+        "--only-reboot",
+        help="Only check whether reboot is required. Only effective in monitoring plug-in mode.",
+        action="store_true",
+    ),
+    parser.add_argument(
+        "--single-host",
+        help="Query only data for one host, this is necessary for using as monitoring-plugins.org compatible operation. If used in the special agent mode (Checkmk only), the output will not mapped in piggyback sections.",
+    ),
+    parser.add_argument(
+        "--cache",
+        help="Specify the directory to cache retrieved data.",
+    ),
     try:
         # Try the 2.5.0 helper:
         parser_add_secret_option(
@@ -71,7 +95,7 @@ def get_cli_arguments():
         # Fall back to manually adding:
         parser.add_argument(
             "--secret-id",
-            help="Reference the ID of the secret as stored in the password store.",
+            help="Reference the ID of the secret as stored in the password store. Requires being run from Checkmk 2.3.0 or higher.",
         )
         # Fall back to manually adding:
         parser.add_argument(
@@ -80,6 +104,20 @@ def get_cli_arguments():
         )
     return parser.parse_args()
 
+def create_config(args):
+    config = {
+        'maxexec': 30,
+        'listage': 1800,
+        'hostage': 1800,
+        'name': 'friendly_name',
+    }
+    if args.maxexec:
+        config['maxexec'] = int(args.maxexec)
+    if args.list:
+        config['listage'] = int(args.list)
+    if args.check:
+        config['hostage'] = int(args.check)
+    return config
 
 def parse_uuid(raw: str) -> uuid.UUID | None:
     try:
@@ -88,13 +126,16 @@ def parse_uuid(raw: str) -> uuid.UUID | None:
         return None
 
 
-def prepare_cache(keyid):
+def prepare_cache(keyid, args):
     # A directory is created for all cached data, the baseurl is sanitized from all slashes
     # to make sure no path traversal is possible
     h = hashlib.sha256()
     h.update(keyid.encode("utf-8"))
     sanitized_host = h.hexdigest()
-    path = os.environ['OMD_ROOT'] + "/tmp/patchmon/" + sanitized_host
+    if args.cache:
+        path = args.cache + "/" + sanitized_host
+    else:
+        path = os.environ['OMD_ROOT'] + "/tmp/patchmon/" + sanitized_host
     tmpdir = Path(path)
     tmpdir.mkdir(parents=True, exist_ok=True)
     return path
@@ -187,8 +228,8 @@ def retrieve_pkglist(auth, pkglisturl, oldpackages):
     j = response.json()["packages"]
     plist = compare_pkglist(j, oldpackages)
     return plist
-    
-    
+
+
 def compare_pkglist(packages, oldpackages):
     t_now = time.time()
     plist = {}
@@ -259,7 +300,22 @@ def get_all_hostsmeta_from_storage(hostlist, maxage, storage):
     return stats
 
 
-def get_all_hoststats(auth, urls, hostlist, maxage, maxexec, storage, path):
+def narrow_down_hostlist(hostlist, fullhostlist, args):
+    resultlist = hostlist
+    if args.single_host:
+        resultlist = []
+        for host in fullhostlist["hosts"]:
+            if host["id"] in hostlist:
+                if args.name == "id" and host["id"] == args.single_host:
+                    return [ host["id"] ]
+                elif args.name == "hostname" and host["hostname"] == args.single_host:
+                    return [ host["id"] ]
+                elif host["friendly_name"] == args.single_host:
+                    return [ host["id"] ]
+    return resultlist
+
+
+def get_all_hoststats(auth, urls, hostlist, maxage, maxexec, storage, path, args):
     url = urls["stats"]
     xurl = urls["extra"]
     if storage:
@@ -267,7 +323,9 @@ def get_all_hoststats(auth, urls, hostlist, maxage, maxexec, storage, path):
     else:
         stats = get_all_hostsmeta_from_fs(hostlist, maxage, path)
     tstart = time.time()
-    for hostid in stats['missinghosts'] + stats['oldhosts']:
+    retrievehostlist = stats['missinghosts'] + stats['oldhosts']
+    retrievehostlist = narrow_down_hostlist(retrievehostlist, hostlist, args)
+    for hostid in retrievehostlist:
         if time.time() - tstart < maxexec:
             statsurl = url.format(baseurl=args.baseurl, uuid=hostid)
             extraurl = xurl.format(baseurl=args.baseurl, uuid=hostid)
@@ -313,11 +371,90 @@ def get_access_token(args):
         # Here we have to differentiate between the two possible parameters
         if args.secret_id:
             store_reference = args.secret_id.split(":")[0]
-            userpass = legacy_pw_store.lookup(legacy_pw_store.password_store_path(), store_reference).split(":")
-            return userpass
+            try:
+                userpass = legacy_pw_store.lookup(legacy_pw_store.password_store_path(), store_reference).split(":")
+                return userpass
+            except:
+                # Either the lookup failed (Checkmk 2.3 and explicit password) or the legacy_pw_store is not available.
+                # In such cases, assume that a plain password was passed
+                userpass = args.secret_id.split(":")[0]
+                return userpass
         else:
             userpass = args.secret.split(":")
             return userpass
+
+def get_hostid(hostlist, args):
+    for host in hostlist['hosts']:
+        if args.name == "id" and host["id"] == args.single_host:
+            return host["id"]
+        elif args.name == "hostname" and host["hostname"] == args.single_host:
+            return host["id"]
+        elif host["friendly_name"] == args.single_host:
+            return host["id"]
+
+
+def generate_monitoring_plugins_output(hostlist, allstats, args, t_start):
+    hostid = get_hostid(hostlist, args)
+    host_data = allstats['hostdata'][hostid]
+    if args.only_reboot:
+        generate_monitoring_plugins_output_reboot(host_data, t_start)
+    else:
+        generate_monitoring_plugins_output_patches(host_data, t_start)
+    
+
+def generate_monitoring_plugins_output_reboot(host_data, t_start):
+    t_end = time.time()
+    duration = t_end - t_start
+    if host_data['needs_reboot'] > 0:
+        reboot_reason = host_data['reboot_reason'].replace('|', '')
+        output = f"reboot required | duration={duration:.3f}s\nReason given: {reboot_reason}\n"
+        print(output)
+        exit(2)
+    else:
+        output = f"no reboot required | duration={duration:.3f}s\n"
+        print(output)
+        exit(0)
+
+
+def generate_monitoring_plugins_output_patches(host_data, t_start):
+    t_end = time.time()
+    duration = t_end - t_start
+    if host_data['security_updates'] > 0:
+        output = f"security updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s\n"
+        print(output)
+        exit(2)
+    elif host_data['outdated_packages'] > 0:
+        output = f"updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s\n"
+        print(output)
+        exit(1)
+    else:
+        output = f"no updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s\n"
+        print(output)
+        exit(0)
+
+
+def generate_checkmk_output(hostlist, allstats, args, t_start):
+    t_end = time.time()
+    for h in hostlist['hosts']:
+        print('<<<<' + h[args.name] + '>>>>')
+        print('<<<patchmon_patches>>>')
+        try:
+            allstats['hostdata'][h['id']]['url'] = urls["host"].format(baseurl=args.baseurl.rstrip('/'), uuid=h['id'])
+            print(json.dumps(allstats['hostdata'][h['id']]))
+            print('<<<labels:sep(0)>>>')
+            print('{"patchmon/monitored":"true"}')
+        except KeyError:
+            print('{ "error": "No data" }')
+        print('<<<<>>>>')
+
+    t_end = time.time()
+    agentstats = {
+        "hoststotal": len(hostlist['hosts']),
+        "hostsskipped": allstats["hostsskipped"],
+        "duration": t_end - t_start
+    }
+    print('<<<patchmon_server>>>')
+    print(json.dumps(agentstats))
 
 
 urls = {
@@ -344,37 +481,21 @@ basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
 # Since the same problem occurs for the hacky caching, use this key instead of
 # baseurl from now on.
 
+conf = create_config(args)
 try:
     stor = Storage('patchmon', userpass[0])
     tmp_path = None
 except NameError:
     stor = None
-    tmp_path = prepare_cache(userpass[0])
+    tmp_path = prepare_cache(userpass[0], args)
 
 # First retrieve the host list
-hostlist = get_hostlist(basic, urls["hosts"], float(args.list), stor, tmp_path)
+hostlist = get_hostlist(basic, urls["hosts"], conf['listage'], stor, tmp_path)
 
 # Now retrieve info for all hosts
-allstats = get_all_hoststats(basic, urls, hostlist, float(args.check), float(args.maxexec), stor, tmp_path)
+allstats = get_all_hoststats(basic, urls, hostlist, conf['hostage'], conf['maxexec'], stor, tmp_path, args)
 
-for h in hostlist['hosts']:
-    print('<<<<' + h[args.name] + '>>>>')
-    print('<<<patchmon_patches>>>')
-    try:
-        allstats['hostdata'][h['id']]['url'] = urls["host"].format(baseurl=args.baseurl.rstrip('/'), uuid=h['id'])
-        print(json.dumps(allstats['hostdata'][h['id']]))
-        print('<<<labels:sep(0)>>>')
-        print('{"patchmon/monitored":"true"}')
-    except KeyError:
-        print('{ "error": "No data" }')
-    print('<<<<>>>>')
-
-t_end = time.time()
-agentstats = {
-    "hoststotal": len(hostlist['hosts']),
-    "hostsskipped": allstats["hostsskipped"],
-    "duration": t_end - t_start
-}
-
-print('<<<patchmon_server>>>')
-print(json.dumps(agentstats))
+if args.monitoring_plugin:
+    generate_monitoring_plugins_output(hostlist, allstats, args, t_start)
+else:
+    generate_checkmk_output(hostlist, allstats, args, t_start)
