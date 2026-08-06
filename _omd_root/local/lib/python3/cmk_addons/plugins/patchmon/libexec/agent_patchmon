@@ -9,6 +9,7 @@ import os
 import re
 import hashlib
 import uuid
+import random
 
 from pathlib import Path
 
@@ -48,11 +49,11 @@ def get_cli_arguments():
     )
     parser.add_argument(
         "--list",
-        help="State the interval (in seconds) host lists should be cached before retrieving them. Default is 1800s.",
+        help="State the interval (in seconds) host lists should be cached before retrieving them. Default is 1800s, ±10% are randomly applied to avoid conflicts from parallel calls.",
     )
     parser.add_argument(
         "--check",
-        help="State the interval (in seconds) patch info for a single hosts should stay cached before retrieving. Default is 1800s.",
+        help="State the interval (in seconds) patch info for a single hosts should stay cached before retrieving. Default is 1800s, ±10% are randomly applied to avoid conflicts from parallel calls.",
     )
     parser.add_argument(
         "--reboot",
@@ -104,6 +105,7 @@ def get_cli_arguments():
         )
     return parser.parse_args()
 
+
 def create_config(args):
     config = {
         'maxexec': 30,
@@ -117,7 +119,12 @@ def create_config(args):
         config['listage'] = int(args.list)
     if args.check:
         config['hostage'] = int(args.check)
+    for k in [ 'listage', 'hostage' ]:
+        rnd = random.random()
+        fac = 0.9 + rnd / 5.0
+        config[k] = int(config[k] * fac)
     return config
+
 
 def parse_uuid(raw: str) -> uuid.UUID | None:
     try:
@@ -471,6 +478,7 @@ args = get_cli_arguments()
 urls["hosts"] = urls["api"].format(baseurl=args.baseurl)
 userpass = get_access_token(args)    
 basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
+conf = create_config(args)
 
 # The user identifier is randomly generated and thus should be globally unique.
 # Since PatchMon host groups might be associated with this identifier, using it
@@ -481,7 +489,6 @@ basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
 # Since the same problem occurs for the hacky caching, use this key instead of
 # baseurl from now on.
 
-conf = create_config(args)
 try:
     stor = Storage('patchmon', userpass[0])
     tmp_path = None
