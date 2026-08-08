@@ -216,7 +216,7 @@ def get_hostlist_from_storage(auth, url, maxage, storage, conf):
     jstr = storage.read("hostlist", None)
     if jstr:
         return json.loads(jstr)
-    j = retrieve_hostlist(auth, url)
+    j = retrieve_hostlist(auth, url, conf)
     storage.unset(hostlist)
     storage.write("hostlist", json.dumps(j))
     return j
