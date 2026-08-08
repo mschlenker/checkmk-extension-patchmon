@@ -75,7 +75,7 @@ monitoring $ echo $?
 
 This is work in progress! Currently, error handling is subpar and features are missing:
 
-* *IMPORTANT* `setproctitle()` to remove the username/password combination is _not_ yet used! Only use on trusted servers!
+* *IMPORTANT* `setproctitle()` to remove the username/password combination from the process description is _not_ yet used! Only use on trusted servers!
 
 * Error handling has been added, but might be incomplete. At least, missing command line options should be properly identified now.
 
