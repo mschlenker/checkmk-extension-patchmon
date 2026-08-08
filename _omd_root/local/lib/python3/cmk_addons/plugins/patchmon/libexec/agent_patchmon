@@ -555,12 +555,17 @@ basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
 # Since the same problem occurs for the hacky caching, use this key instead of
 # baseurl from now on.
 
-try:
-    stor = Storage('patchmon', userpass[0])
-    tmp_path = None
-except NameError:
+if args.monitoring_plugin:
+    # in monitoring-plugin compatible mode, always use the old style cache:
     stor = None
     tmp_path = prepare_cache(userpass[0], args)
+else:
+    try:
+        stor = Storage('patchmon', userpass[0])
+        tmp_path = None
+    except NameError:
+        stor = None
+        tmp_path = prepare_cache(userpass[0], args)
 
 # First retrieve the host list
 hostlist = get_hostlist(basic, urls["hosts"], conf['listage'], stor, tmp_path, conf)
