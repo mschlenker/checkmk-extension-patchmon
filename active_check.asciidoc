@@ -4,7 +4,7 @@
 The core script can generate output as specified by link:https://www.monitoring-plugins.org/doc/guidelines.html#PLUGOUTPUT[monitoring plugins^].
 In this case, manual installation and configuration is needed.
 
-If someone wants to provide templates for some of the non-Checkmk monitoring system, feel free to do a pull request.
+If someone wants to provide templates for some of the non-Checkmk monitoring system, please create a GitHub issue with an attachment.
 
 == Installation
 
