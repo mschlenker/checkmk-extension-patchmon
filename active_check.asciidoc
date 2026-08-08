@@ -75,6 +75,8 @@ monitoring $ echo $?
 
 This is work in progress! Currently, error handling is subpar and features are missing:
 
+* *IMPORTANT* `setproctitle()` to remove the username/password combination is _not_ yet used! Only use on trusted servers!
+
 * Error handling has been added, but might be incomplete. At least, missing command line options should be properly identified now.
 
 * Grace periods as available in the Checkmk check plug-in are not yet available.
