@@ -8,7 +8,7 @@ If someone wants to provide templates for some of the non-Checkmk monitoring sys
 
 == Installation
 
-Currently, I recommend using 'master'. I will remove this note as soon as feature releases are aligned with the MKP for Checkmk.
+Currently, I recommend using the 'main' branch. I will remove this note as soon as feature releases are aligned with the MKP for Checkmk.
 
 By convention, active checks use the prefix `check_`, so installing it to `check_patchmon` probably makes most sense:
 
