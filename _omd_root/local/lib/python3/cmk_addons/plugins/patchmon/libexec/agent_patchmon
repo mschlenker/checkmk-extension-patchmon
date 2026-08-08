@@ -432,7 +432,7 @@ def get_hostid(hostlist, args):
             return host["id"]
 
 
-def generate_monitoring_plugins_output(hostlist, allstats, args, t_start):
+def generate_monitoring_plugins_output(hostlist, allstats, args, t_start, conf):
     hostid = get_hostid(hostlist, args)
     if hostid is None:
         t_end = time.time()
@@ -442,36 +442,40 @@ def generate_monitoring_plugins_output(hostlist, allstats, args, t_start):
         exit(3)
     host_data = allstats['hostdata'][hostid]
     if args.only_reboot:
-        generate_monitoring_plugins_output_reboot(host_data, t_start)
+        generate_monitoring_plugins_output_reboot(host_data, t_start, conf)
     else:
-        generate_monitoring_plugins_output_patches(host_data, t_start)
+        generate_monitoring_plugins_output_patches(host_data, t_start, conf)
     
 
-def generate_monitoring_plugins_output_reboot(host_data, t_start):
+def generate_monitoring_plugins_output_reboot(host_data, t_start, conf):
     t_end = time.time()
     duration = t_end - t_start
+    if not 'needs_reboot' in host_data:
+        output = f"query failed | duration={duration:.3f}s;;;;\nThe needs_reboot flag in the cached data is missing. This is most likely due to two checks (one for patches and one for reboots being run on a single host. Add the CLI flag --reboot also to the check for patches to query and cache the needs_reboot flog."
+        print(output)
+        exit(3)
     if host_data['needs_reboot'] > 0:
         reboot_reason = host_data['reboot_reason'].replace('|', '')
         output = f"reboot required | duration={duration:.3f}s;;;;\nReason given: {reboot_reason}"
         print(output)
-        exit(2)
+        exit(conf['states'][2])
     else:
         output = f"no reboot required | duration={duration:.3f}s;;;;"
         print(output)
         exit(0)
 
 
-def generate_monitoring_plugins_output_patches(host_data, t_start):
+def generate_monitoring_plugins_output_patches(host_data, t_start, conf):
     t_end = time.time()
     duration = t_end - t_start
     if host_data['security_updates'] > 0:
-        output = f"security updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;"
+        output = f"security updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;\n{host_data['security_updates']} security updates are missing, in total {host_data['outdated_packages']} updates are missing."
         print(output)
-        exit(2)
+        exit(conf['states'][0])
     elif host_data['outdated_packages'] > 0:
-        output = f"updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;"
+        output = f"updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;\n{host_data['outdated_packages']} updates are missing, none of those are security updates."
         print(output)
-        exit(1)
+        exit(conf['states'][1])
     else:
         output = f"no updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;"
         print(output)
@@ -565,6 +569,6 @@ hostlist = get_hostlist(basic, urls["hosts"], conf['listage'], stor, tmp_path, c
 allstats = get_all_hoststats(basic, urls, hostlist, conf['hostage'], conf['maxexec'], stor, tmp_path, args, conf)
 
 if args.monitoring_plugin:
-    generate_monitoring_plugins_output(hostlist, allstats, args, t_start)
+    generate_monitoring_plugins_output(hostlist, allstats, args, t_start, conf)
 else:
     generate_checkmk_output(hostlist, allstats, args, t_start)
