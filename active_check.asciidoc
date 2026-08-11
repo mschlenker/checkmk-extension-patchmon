@@ -91,7 +91,6 @@ Run as a cron job with reasonable intervals. The sender tries to set the items `
     --list 3600 \
     --secret 'patchmon_ae_decafbad:deadbeef' \
     --cache /tmp/agent_patchmon \
-    --single-host somehostname \
     --zabbix 127.0.0.1 --port 10051 \
     --reboot
 Trying to set Zabbix items for somehost
