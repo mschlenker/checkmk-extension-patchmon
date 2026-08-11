@@ -25,9 +25,17 @@ except ModuleNotFoundError:
         # Silently ignore
         True
     
-# The new storage API is available starting with 2.5.0
+# The new Checkmk storage API is available starting with 2.5.0
 try:
     from cmk.server_side_programs.v1_unstable import Storage
+except ModuleNotFoundError:
+    # Silently ignore
+    True
+    
+# When using with Zabbix, use their sender with multiple values per call:
+try:
+    from zabbix_utils import ItemValue as ZabbixItemValue
+    from zabbix_utils import Sender as ZabbixSender
 except ModuleNotFoundError:
     # Silently ignore
     True
@@ -69,6 +77,14 @@ def get_cli_arguments():
         "--monitoring-plugin",
         help="Behave as monitoring plug-in for Nagios and related systems like Icinga.",
         action="store_true",
+    ),
+    parser.add_argument(
+        "--zabbix",
+        help="Act as a sender for the Zabbix trapper protocol. Takes the IP address of the Zabbix server as argument. This will try to set the items patchmon.updates, patchmon.security_updates and patchmon.reboot for each host.",
+    ),
+    parser.add_argument(
+        "--port",
+        help="Use together with --zabbix to specify the trapper port. If no port is specified, the default (10051) is used.",
     ),
     parser.add_argument(
         "--only-reboot",
@@ -123,6 +139,8 @@ def create_config(args):
         'cache': None,
         'single_host': None,
         'monitoring_plugin': False,
+        'zabbix': None,
+        'zabbix_port': 10051,
     }
     if args.monitoring_plugin:
         config['monitoring_plugin'] = True
@@ -142,6 +160,10 @@ def create_config(args):
         config['cache'] = args.cache
     if args.single_host:
         config['single_host'] = args.single_host
+    if args.zabbix:
+        config['zabbix'] = args.zabbix
+    if args.port:
+        config['port'] = 10051
     if args.states:
         n = 0
         for s in args.states.split(','):
@@ -525,6 +547,44 @@ def check_monitoring_plugins_parameters(config, t_start):
         output = f"query failed | duration={duration:.3f}s;;;;\nSpecify the host for which to query for updates with the CLI option --single-host."
         print(output)
         exit(3)
+        
+def zabbix_send_traps(hostlist, allstats, conf, t_start):
+    for h in hostlist['hosts']:
+        now = time.time()
+        try:
+            print(f"Trying to set Zabbix items for {h[conf['name']]}")
+            allstats['hostdata'][h['id']]['url'] = urls["host"].format(baseurl=args.baseurl.rstrip('/'), uuid=h['id'])
+            sender = ZabbixSender(server=conf['zabbix'], port=conf['zabbix_port'])
+            res = sender.send_value(
+                h[conf['name']], 
+                'patchmon.updates',
+                allstats['hostdata'][h['id']]['outdated_packages'],
+                now
+            )
+            if res.failed > 0:
+                print(f"Failed setting patchmon.updates for {h[conf['name']]}")
+            res = sender.send_value(
+                h[conf['name']], 
+                'patchmon.security_updates',
+                allstats['hostdata'][h['id']]['security_updates'],
+                now
+            )
+            if res.failed > 0:
+                print(f"Failed setting patchmon.security_updates for {h[conf['name']]}")
+            if "needs_reboot" in allstats['hostdata'][h['id']]:
+                res = sender.send_value(
+                    h[conf['name']], 
+                    'patchmon.reboot',
+                    allstats['hostdata'][h['id']]['needs_reboot'],
+                    now
+                )
+                if res.failed > 0:
+                    print(f"Failed setting patchmon.reboot for {h[conf['name']]}")
+        except KeyError:
+            print(f"ERROR: No data for {h[conf['name']]}")
+    # t_end = time.time()
+
+        
 urls = {
     "api": "{baseurl}/api/v1/api/hosts",
     "host": "{baseurl}/hosts/{uuid}",
@@ -555,7 +615,7 @@ basic = requests.auth.HTTPBasicAuth(userpass[0], userpass[1])
 # Since the same problem occurs for the hacky caching, use this key instead of
 # baseurl from now on.
 
-if args.monitoring_plugin:
+if args.monitoring_plugin or args.zabbix:
     # in monitoring-plugin compatible mode, always use the old style cache:
     stor = None
     tmp_path = prepare_cache(userpass[0], args)
@@ -575,5 +635,7 @@ allstats = get_all_hoststats(basic, urls, hostlist, conf['hostage'], conf['maxex
 
 if args.monitoring_plugin:
     generate_monitoring_plugins_output(hostlist, allstats, args, t_start, conf)
+elif args.zabbix:
+    zabbix_send_traps(hostlist, allstats, conf, t_start)
 else:
     generate_checkmk_output(hostlist, allstats, args, t_start)
