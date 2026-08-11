@@ -45,7 +45,6 @@ monitoring $ check_patchmon --baseurl https://patchmon.mydomain.test \
     --states 2,1,2 \
     --secret 'patchmon_ae_decafbad:deadbeef' \
     --cache /tmp/agent_patchmon \
-    --single-host somehostname \
     --monitoring-plugin \
     --reboot
 security updates missing | security_updates=1;;;; total_updates=2;;;; duration=0.001s
@@ -111,5 +110,7 @@ This is work in progress! Currently, error handling is subpar and features are m
 * Error handling has been added, but might be incomplete. At least, missing command line options should be properly identified now.
 
 * Grace periods as available in the Checkmk check plug-in are not yet available.
+
+* The sender for Zabbix is very inefficient, it updates only one item per call and does re-send everything on any invocation. This will be switched to batches and flagging already sent data for more efficiency. 
 
 I will add all of these over the next months.
