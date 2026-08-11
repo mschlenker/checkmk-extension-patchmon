@@ -89,7 +89,6 @@ Run as a cron job with reasonable intervals. The sender tries to set the items `
     --name friendly_name \
     --check 1200 \
     --list 3600 \
-    --states 2,1,2 \
     --secret 'patchmon_ae_decafbad:deadbeef' \
     --cache /tmp/agent_patchmon \
     --single-host somehostname \
