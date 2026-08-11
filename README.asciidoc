@@ -5,7 +5,7 @@ This repository contains a link:https://github.com/checkmk/checkmk[Checkmk^] spe
 The matching check plug-ins to create a _PatchMon patches_ service are provided as well. 
 Configuration via Checkmk GUI is possible for the special agent and the service.
 
-*Note:* Despite the name of the repository, the core script in this repository has command line switches to behave as link:https://www.monitoring-plugins.org/[monitoring plugin^] for other monitoring systems (e.g. Icinga, LibreNMS, Nagios).
+*Note:* Despite the name of the repository, the core script in this repository has command line switches to behave as link:https://www.monitoring-plugins.org/[monitoring plugin^] for other monitoring systems (e.g. Icinga, LibreNMS, Nagios) or as sender for Zabbix trapper.
 See the xref:active_check#[notes on active checks] in case you are _not_ using Checkmk.
 
 == Compatibility

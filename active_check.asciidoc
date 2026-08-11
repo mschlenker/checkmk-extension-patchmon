@@ -4,6 +4,8 @@
 The core script can generate output as specified by link:https://www.monitoring-plugins.org/doc/guidelines.html#PLUGOUTPUT[monitoring plugins^].
 In this case, manual installation and configuration is needed.
 
+Another switch can be used to generate traps for the Zabbix trapper.
+
 If someone wants to provide templates for some of the non-Checkmk monitoring system, please create a GitHub issue with an attachment.
 
 == Installation
@@ -19,7 +21,14 @@ root #  install -m 0755 \
     /usr/local/bin/check_patchmon
 ----
 
-== Invocation
+If you are using Zabbix, create a `venv` and install the Zabbix utils there:
+
+[source,console,subs="attributes+"]
+----
+(venv) monitoring $ python3 -m pip install zabbix_utils
+----
+
+== Invocation as monitoring plug-in
 
 Running as active check requires passing the host name, which type of name (default is 'friendly_name') should be applied to identify the host and the parameter `--monitoring-plugin`.
 
@@ -34,7 +43,7 @@ monitoring $ check_patchmon --baseurl https://patchmon.mydomain.test \
     --check 1200 \
     --list 3600 \
     --states 2,1,2 \
-    --secret  'patchmon_ae_decafbad:deadbeef' \
+    --secret 'patchmon_ae_decafbad:deadbeef' \
     --cache /tmp/agent_patchmon \
     --single-host somehostname \
     --monitoring-plugin \
@@ -60,7 +69,7 @@ monitoring $ check_patchmon --baseurl https://patchmon.mydomain.test \
     --check 1200 \
     --list 3600 \
     --states 2,1,2 \
-    --secret  'patchmon_ae_decafbad:deadbeef' \
+    --secret 'patchmon_ae_decafbad:deadbeef' \
     --cache /tmp/agent_patchmon \
     --single-host somehostname \
     --monitoring-plugin \
@@ -69,6 +78,28 @@ reboot required | duration=0.695s
 Reason given: Reboot flag file exists (/var/run/reboot-required)  Running kernel: 6.8.0-136-generic, Installed kernel: 6.8.0-137-generic
 monitoring $ echo $?
 2
+----
+
+== Invocation as sender for Zabbix trapper
+
+Run as a cron job with reasonable intervals. The sender tries to set the items `patchmon.updates`, `patchmon.security_updates` and `patchmon.reboot`.
+
+[source,console,subs="attributes+"]
+----
+(venv) monitoring $ check_patchmon --baseurl https://patchmon.mydomain.test \
+    --name friendly_name \
+    --check 1200 \
+    --list 3600 \
+    --states 2,1,2 \
+    --secret 'patchmon_ae_decafbad:deadbeef' \
+    --cache /tmp/agent_patchmon \
+    --single-host somehostname \
+    --zabbix 127.0.0.1 --port 10051 \
+    --reboot
+Trying to set Zabbix items for somehost
+Trying to set Zabbix items for anotherhost
+Failed setting patchmon.updates for anotherhost
+...
 ----
 
 == Limitations
