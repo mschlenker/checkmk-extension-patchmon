@@ -21,7 +21,7 @@ root #  install -m 0755 \
     /usr/local/bin/check_patchmon
 ----
 
-If you are using Zabbix, create a `venv` and install the Zabbix utils there:
+If you are using Zabbix, create a `venv` and install the link:https://github.com/zabbix/python-zabbix-utils[Zabbix utils^] there:
 
 [source,console,subs="attributes+"]
 ----
