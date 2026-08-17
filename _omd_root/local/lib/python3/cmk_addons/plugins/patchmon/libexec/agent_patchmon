@@ -12,6 +12,7 @@ import uuid
 import random
 
 from pathlib import Path
+NO_CMK_STORAGE = False
 
 # Make sure this script can be run from Checkmk 2.3.0 onwards and as active check without Checkmk APIs
 # The new password store API is available starting with 2.5.0
@@ -35,7 +36,7 @@ try:
     from cmk.server_side_programs.v1_unstable import Storage as CmkStorage
 except ModuleNotFoundError:
     # Silently ignore and fall back to temporary storage
-    True
+    NO_CMK_STORAGE = True
     
 # When using with Zabbix, use their sender with multiple values per call:
 try:
@@ -61,14 +62,20 @@ class Storage:
             if 'OMD_ROOT' in os.environ:
                 self.cachedir = os.environ['OMD_ROOT'] + "/tmp/patchmon/" + config['storkey']
                 if config['debug']: print(f"Initialized file storage at {self.cachedir} (using OMD_ROOT)")
+                if not os.path.exists(self.cachedir): os.makedirs(self.cachedir)
             else:
-                self.cachedir = config['cache'] + "/" + config['storkey']
-                if config['debug']: print(f"Initialized file storage at {self.cachedir} (without OMD_ROOT)")
-            if not os.path.exists(self.cachedir): os.makedirs(self.cachedir)
+                try:
+                    self.cachedir = config['cache'] + "/" + config['storkey']
+                    if config['debug']: print(f"Initialized file storage at {self.cachedir} (without OMD_ROOT)")
+                    if not os.path.exists(self.cachedir): os.makedirs(self.cachedir)
+                except TypeError:
+                    True
             
     def get_hostlist(self):
         hostlist = None
         outdated = True
+        if self.cachedir is None:
+            return None, True
         if self.is_dir:
             listfile = self.cachedir + "/hostlist.json"
             if self.config['debug']: print(f"Searching for hostlist: {listfile}")
@@ -617,6 +624,8 @@ class AgentConfig:
             self.check_config_monitoring_plugin()
         elif self.config["zabbix"] is not None:
             self.check_config_zabbix()
+        else:
+            self.check_config_general()
             
     def check_config_monitoring_plugin(self):
         t_end = time.time()
@@ -651,6 +660,24 @@ class AgentConfig:
         if self.config['cache'] is None:
             output = f"ERROR: Specify a cache directory to store the host list and the patch states with the CLI option --cache."
             print(output)
+            exit(0)
+    
+    def check_config_general(self):
+        error = ""
+        ec = 0
+        if self.config['baseurl'] is None:
+            error = error + " Specify the base URL for your patchmon server including the protocol ('http://' or 'https://'), but without the trailing slash with the CLI option --baseurl."
+            ec += 1
+        if (self.config['secret'] is None and self.config['secret_id'] is None):
+            error = error + " Specify colon separated user:pass pair with the CLI option --secret or pass an option to the password store using --secret-id."
+            ec += 1
+        if NO_CMK_STORAGE == True and not 'OMD_ROOT' in os.environ and self.config["cache"] is None:
+            error = error + " Specify a cache directory to store the host list and the patch states with the CLI option --cache. Or make sure the Storage API (Checkmk 2.5+) is accessible. Or make sure the OMD_ROOT environment variable is set."
+            ec += 1
+        if ec > 0:
+            agentstats = { "error": error.strip() }
+            print('<<<patchmon_server>>>')
+            print(json.dumps(agentstats))
             exit(0)
 
 
