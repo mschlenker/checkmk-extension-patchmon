@@ -16,20 +16,25 @@ from pathlib import Path
 # Make sure this script can be run from Checkmk 2.3.0 onwards and as active check without Checkmk APIs
 # The new password store API is available starting with 2.5.0
 try:
-    from cmk.password_store.v1_unstable import Secret, parser_add_secret_option, resolve_secret_option, dereference_secret
+    from cmk.password_store.v1_unstable import (
+        Secret as CmkSecret,
+        parser_add_secret_option as cmk_parser_add_secret_option,
+        resolve_secret_option,
+        dereference_secret,
+    )
 except ModuleNotFoundError:
-    # Just use the old one if importing the new one fails...
+    # Try to use the old one if importing the new one fails...
     try:
-        from cmk.utils import password_store as legacy_pw_store
+        from cmk.utils import password_store as cmk_legacy_pw_store
     except ModuleNotFoundError:
-        # Silently ignore
+        # Silently ignore, passwords must be provided plain text!
         True
     
 # The new Checkmk storage API is available starting with 2.5.0
 try:
-    from cmk.server_side_programs.v1_unstable import Storage
+    from cmk.server_side_programs.v1_unstable import Storage as CmkStorage
 except ModuleNotFoundError:
-    # Silently ignore
+    # Silently ignore and fall back to temporary storage
     True
     
 # When using with Zabbix, use their sender with multiple values per call:
@@ -40,140 +45,593 @@ except ModuleNotFoundError:
     # Silently ignore
     True
 
-def get_cli_arguments():
-    parser = argparse.ArgumentParser("agent_patchmon")
-    parser.add_argument(
-        "--baseurl",
-        help="Specify the baseurl for your PatchMon installation.",
-    )
-    parser.add_argument(
-        "--name",
-        help="Chose whether 'id', 'hostname' or 'friendly_name' should be used to create hostname. Default is 'friendly_name'.",
-    )
-    parser.add_argument(
-        # Only makes sense when used as Checkmk special agent with piggyback mode 
-        "--maxexec",
-        help="State a maximum time the special agent should take to retrieve patch details. Default is 30s. Irrelevant when querying a single host.",
-    )
-    parser.add_argument(
-        "--list",
-        help='State the interval (in seconds) host lists should be cached before retrieving them. Default is 1800s, +/-10 percent are randomly applied to avoid conflicts from parallel calls.',
-    )
-    parser.add_argument(
-        "--check",
-        help='State the interval (in seconds) patch info for a single hosts should stay cached before retrieving. Default is 1800s, +/-10 percent are randomly applied to avoid conflicts from parallel calls.',
-    )
-    parser.add_argument(
-        "--reboot",
-        help="If present, also query whether a reboot is required and ask for the reasons.",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--grace",
-        help="Get the package list for being able to create a grace period in the check plugin.",
-        action="store_true",
-    )
-    parser.add_argument(
-        "--monitoring-plugin",
-        help="Behave as monitoring plug-in for Nagios and related systems like Icinga.",
-        action="store_true",
-    ),
-    parser.add_argument(
-        "--zabbix",
-        help="Act as a sender for the Zabbix trapper protocol. Takes the IP address of the Zabbix server as argument. This will try to set the items patchmon.updates, patchmon.security_updates and patchmon.reboot for each host.",
-    ),
-    parser.add_argument(
-        "--port",
-        help="Use together with --zabbix to specify the trapper port. If no port is specified, the default (10051) is used.",
-    ),
-    parser.add_argument(
-        "--only-reboot",
-        help="Only check whether reboot is required. Only effective in monitoring plug-in mode.",
-        action="store_true",
-    ),
-    parser.add_argument(
-        "--single-host",
-        help="Query only data for one host, this is necessary for using as monitoring-plugins.org compatible operation. If used in the special agent mode (Checkmk only), the output will not mapped in piggyback sections.",
-    ),
-    parser.add_argument(
-        "--cache",
-        help="Specify the directory to cache retrieved data.",
-    ),
-    parser.add_argument(
-        "--states",
-        help="Specify a comma separated list of the exit codes for: missing security updates, missing regular updates and a required reboot. The default is: 2,1,2.",
-    ),
-    try:
-        # Try the 2.5.0 helper:
-        parser_add_secret_option(
-            parser,
-            short="-s",
-            long="--secret",
-            help="Specify the id:token to log in to PatchMon.",
-            required=True
-        )
-    except NameError:
-        # Fall back to manually adding:
-        parser.add_argument(
-            "--secret-id",
-            help="Reference the ID of the secret as stored in the password store. Requires being run from Checkmk 2.3.0 or higher.",
-        )
-        # Fall back to manually adding:
-        parser.add_argument(
-            "--secret",
-            help="Specify the id:token to log in to PatchMon.",
-        )
-    return parser.parse_args()
+
+class Storage:
+    def __init__(self, config):
+        self.config = config
+        self.stor = None
+        self.is_dir = True
+        self.cachedir = None
+        self.cmkstorage = None
+        try:
+            self.cmkstorage = CmkStorage('patchmon', config['storkey'])
+            self.is_dir = False
+            if config['debug']: print(f"Managed to init CmkStorage with key {config['storkey']}")
+        except NameError:
+            if 'OMD_ROOT' in os.environ:
+                self.cachedir = os.environ['OMD_ROOT'] + "/tmp/patchmon/" + config['storkey']
+                if config['debug']: print(f"Initialized file storage at {self.cachedir} (using OMD_ROOT)")
+            else:
+                self.cachedir = config['cache'] + "/" + config['storkey']
+                if config['debug']: print(f"Initialized file storage at {self.cachedir} (without OMD_ROOT)")
+            if not os.path.exists(self.cachedir): os.makedirs(self.cachedir)
+            
+    def get_hostlist(self):
+        hostlist = None
+        outdated = True
+        if self.is_dir:
+            listfile = self.cachedir + "/hostlist.json"
+            if self.config['debug']: print(f"Searching for hostlist: {listfile}")
+            if os.path.exists(listfile):
+                with open(listfile, "r") as file:
+                    c = file.read()
+                    try:
+                        hostlist = json.loads(c)
+                    except json.decoder.JSONDecodeError:
+                        if self.config['debug']: print(f"Invalid JSON for hostlist: {listfile}")
+                        hostlist = None
+                if time.time() - os.path.getmtime(listfile) < self.config['listage']:
+                    outdated = False
+        else:
+            jstr = storage.read("hostlist", None)
+            if jstr:
+                hostlist = json.loads(jstr)
+                if mtime in hostlist:
+                    if time.time() - hostlist['mtime'] < maxage:
+                        outdated = False
+        return hostlist, outdated
+        
+    def set_hostlist(self, hostlist):
+        if self.is_dir:
+            listfile = self.cachedir + "/hostlist.json"
+            if self.config['debug']: print(f"Writing to hostlist: {listfile}")
+            with open(listfile, "w") as file:
+                file.write(json.dumps(hostlist))
+        else:
+            hostlist['mtime'] = time.time()
+            self.cmkstorage.unset("hostlist")
+            self.storage.write("hostlist", json.dumps(hostlist))
+        
+    def get_host(self, hostid):
+        hostdata = None
+        outdated = True
+        if parse_uuid(hostid):
+            if self.is_dir:
+                hostfile = self.cachedir + "/" + hostid + ".json"
+                if os.path.exists(hostfile):
+                    with open(hostfile, "r") as file:
+                        c = file.read()
+                        try:
+                            hostdata = json.loads(c)
+                        except json.decoder.JSONDecodeError:
+                            if self.config['debug']: print(f"Invalid JSON for hostdata: {hostfile}")
+                            hostlist = None
+                    if time.time() - os.path.getmtime(hostfile) < self.config['hostage']:
+                        outdated = False
+            else:
+                jstr = storage.read(hostid, None)
+                if jstr:
+                    hostlist = json.loads(jstr)
+                    if mtime in hostlist:
+                        if time.time() - hostlist['mtime'] < maxage:
+                            outdated = False
+        return hostdata, outdated
+
+    def set_host(self, hostid, hostdata):
+        if parse_uuid(hostid):
+            hostdata['mtime'] = time.time()
+            if self.is_dir:
+                hostfile = self.cachedir + "/" + hostid + ".json"
+                if self.config['debug']: print(f"Writing to hostfile: {hostfile}")
+                with open(hostfile, "w") as file:
+                    file.write(json.dumps(hostdata))
+            else:
+                self.cmkstorage.unset(hostid)
+                self.storage.write(hostid, json.dumps(hostdata))
 
 
-def create_config(args):
-    config = {
-        'maxexec': 30,
-        'listage': 1800,
-        'hostage': 1800,
-        'name': 'friendly_name',
-        'states': [ 2, 1, 2 ],
-        'secret': None,
-        'secret_id': None,
-        'baseurl': None,
-        'cache': None,
-        'single_host': None,
-        'monitoring_plugin': False,
-        'zabbix': None,
-        'zabbix_port': 10051,
-    }
-    if args.monitoring_plugin:
-        config['monitoring_plugin'] = True
-    if args.maxexec:
-        config['maxexec'] = int(args.maxexec)
-    if args.list:
-        config['listage'] = int(args.list)
-    if args.check:
-        config['hostage'] = int(args.check)
-    if args.secret:
-        config['secret'] = args.secret
-    if args.secret_id:
-        config['secret_id'] = args.secret_id
-    if args.baseurl:
-        config['baseurl'] = args.baseurl
-    if args.cache:
-        config['cache'] = args.cache
-    if args.single_host:
-        config['single_host'] = args.single_host
-    if args.zabbix:
-        config['zabbix'] = args.zabbix
-    if args.port:
-        config['port'] = 10051
-    if args.states:
-        n = 0
-        for s in args.states.split(','):
-            config['states'][n] = int(s)
-            n += 1
-    for k in [ 'listage', 'hostage' ]:
-        rnd = random.random()
-        fac = 0.9 + rnd / 5.0
-        config[k] = int(config[k] * fac)
-    return config
+class SingleHost:
+    def __init__(self, config, storage, hostid, hostname):
+        self.config = config
+        self.storage = storage
+        self.hostid = hostid
+        self.hostname = hostname
+        self.hosturl = None
+        self.hostdata = None
+        self.populate()
+    
+    def populate(self):
+        outdated = True
+        writeback = False
+        self.hostdata, outdated = storage.get_host(self.hostid)
+        oldpackages = {}
+        if outdated == True or self.hostdata is None:
+            if self.config['debug']: print(f"Host data for {self.hostid} is missing or outdated.")
+            if self.hostdata is not None and 'packages' in self.hostdata: oldpackages = self.hostdata['packages']
+            if time.time() - START_TIME < self.config['maxexec']:
+                if self.config['debug']: print(f"Calling PatchMon server for {self.hostid}...")
+                self.hostdata = self.retrieve_hostdata()
+                self.hosturl = self.config["url"]["host"].format(baseurl=self.config["baseurl"].rstrip('/'), uuid=self.hostdata['host_id'])
+                self.hostdata["url"] = self.hosturl
+            else:
+                if self.config['debug']: print(f"Maxexec reached, using cached data for {self.hostid}...")
+                return
+            writeback = True
+        if self.config['reboot']:
+            if not 'needs_reboot' in self.hostdata:
+                if self.config['debug']: print(f"Reboot info for {self.hostid} is missing.")
+                x = self.retrieve_hostextra()
+                self.hostdata['needs_reboot'] = x['needs_reboot']
+                self.hostdata['reboot_reason'] = x['reboot_reason']
+                writeback = True
+        if self.config['grace']:
+            if not 'packages' in self.hostdata:
+                if self.config['debug']: print(f"Package info for {self.hostid} is missing.")
+                self.hostdata['packages'] = self.retrieve_pkglist(oldpackages)
+                writeback = True
+        # Put this quite last:
+        if writeback == True:
+            self.storage.set_host(self.hostid, self.hostdata)
+        
+    def retrieve_hostdata(self):
+        error = 'Error retrieving host statistics. Since this happened after retrieving '\
+            'the host list, this is most likely caused by an outdated version of PatchMon. '
+        basic = requests.auth.HTTPBasicAuth(self.config['pmuser'], self.config['pmpass'])
+        url = self.config['url']['stats'].format(baseurl=self.config['baseurl'], uuid=self.hostid)
+        try:
+            response = requests.get(url, auth=basic)
+        except Exception as err:
+            gently_exit(error + str(err), conf)
+        if response.status_code > 200:
+            gently_exit(error + "Got status code: " + str(response.status_code), conf)
+        j = response.json()
+        # print(j)
+        return j
+        
+    def retrieve_hostextra(self):
+        error = 'Error retrieving host details. Since this happened after retrieving '\
+            'the host list, this is most likely caused by an outdated version of PatchMon. '
+        basic = requests.auth.HTTPBasicAuth(self.config['pmuser'], self.config['pmpass'])
+        extraurl = self.config['url']['extra'].format(baseurl=self.config['baseurl'], uuid=self.hostid)
+        try:
+            response = requests.get(extraurl, auth=basic)
+        except Exception as err:
+            gently_exit(error + str(err), conf)
+        if response.status_code > 200:
+            gently_exit(error + "Got status code: " + str(response.status_code), conf)
+        j = response.json()
+        # print(j)
+        return j
+    
+    def retrieve_pkglist(self, oldpackages):
+        error = 'Error retrieving package list. Since this happened after retrieving '\
+            'the host list, this is most likely caused by an outdated version of PatchMon. '
+        basic = requests.auth.HTTPBasicAuth(self.config['pmuser'], self.config['pmpass'])
+        pkglisturl = self.config['url']['pkglist'].format(baseurl=self.config['baseurl'], uuid=self.hostid)
+        try:
+            response = requests.get(pkglisturl, auth=basic, params={"updates_only": "true"})
+        except Exception as err:
+            gently_exit(error + str(err), conf)
+        if response.status_code > 200:
+            gently_exit(error + "Got status code: " + str(response.status_code), conf)
+        j = response.json()["packages"]
+        plist = self.compare_pkglist(j, oldpackages)
+        # print(plist)
+        return plist
+        
+    def compare_pkglist(self, packages, oldpackages):
+        t_now = time.time()
+        plist = {}
+        for p in packages:
+            if p["name"] in oldpackages:
+                pmeta = oldpackages[p["name"]]
+                if oldpackages[p["name"]]["is_security_update"] is True:
+                    pmeta["is_security_update"] = True
+            else:
+                pmeta = { 
+                    "is_security_update": p["is_security_update"],
+                    "first_seen" : t_now,
+                }
+            plist[p["name"]] = pmeta
+        return plist
+        
+    def generate_monitoring_plugins_output(self):
+        if self.config['only_reboot'] == True:
+            self.generate_monitoring_plugins_output_reboot()
+        else:
+            self.generate_monitoring_plugins_output_patches()
+            
+    def generate_monitoring_plugins_output_reboot(self):
+        t_end = time.time()
+        duration = t_end - START_TIME
+        host_data = self.hostdata
+        conf = self.config
+        if not 'needs_reboot' in host_data or host_data is None:
+            output = f"query failed | duration={duration:.3f}s;;;;\nThe needs_reboot flag in the cached data is missing. This is most likely due to two checks (one for patches and one for reboots being run on a single host. Add the CLI flag --reboot also to the check for patches to query and cache the needs_reboot flog."
+            print(output)
+            exit(3)
+        if host_data['needs_reboot'] > 0:
+            reboot_reason = host_data['reboot_reason'].replace('|', '')
+            output = f"reboot required | duration={duration:.3f}s;;;;\nReason given: {reboot_reason}"
+            print(output)
+            exit(conf['states'][2])
+        else:
+            output = f"no reboot required | duration={duration:.3f}s;;;;"
+            print(output)
+            exit(0)
+
+    def generate_monitoring_plugins_output_patches(self):
+        t_end = time.time()
+        duration = t_end - START_TIME
+        host_data = self.hostdata
+        conf = self.config
+        if host_data['security_updates'] > 0:
+            output = f"security updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;\n{host_data['security_updates']} security updates are missing, in total {host_data['outdated_packages']} updates are missing."
+            print(output)
+            exit(conf['states'][0])
+        elif host_data['outdated_packages'] > 0:
+            output = f"updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;\n{host_data['outdated_packages']} updates are missing, none of those are security updates."
+            print(output)
+            exit(conf['states'][1])
+        else:
+            output = f"no updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;"
+            print(output)
+            exit(0)
+            
+    def zabbix_send_traps(self):
+        now = time.time()
+        conf = self.config
+        try:
+            print(f"Trying to set Zabbix items for {self.hostname}")
+            sender = ZabbixSender(server=conf['zabbix'], port=conf['zabbix_port'])
+            res = sender.send_value(
+                self.hostname, 
+                'patchmon.updates',
+                self.hostdata['outdated_packages'],
+                now
+            )
+            if res.failed > 0:
+                print(f"Failed setting patchmon.updates for {h[conf['name']]}")
+            res = sender.send_value(
+                self.hostname, 
+                'patchmon.security_updates',
+                self.host_data['security_updates'],
+                now
+            )
+            if res.failed > 0:
+                print(f"Failed setting patchmon.security_updates for {self.hostname}")
+            if "needs_reboot" in self.hostdata:
+                res = sender.send_value(
+                    self.hostname, 
+                    'patchmon.reboot',
+                    self.hostdata['needs_reboot'],
+                    now
+                )
+                if res.failed > 0:
+                    print(f"Failed setting patchmon.reboot for {h[conf['name']]}")
+        except KeyError:
+            print(f"ERROR: No data for {h[conf['name']]}")
+    
+    def generate_checkmk_output(self):
+        print('<<<patchmon_patches>>>')
+        try:
+            print(json.dumps(self.hostdata))
+            print('<<<labels:sep(0)>>>')
+            print('{"patchmon/monitored":"true"}')
+        except KeyError:
+            print('{ "error": "No data" }')
+
+class AllHosts:
+    def __init__(self, config, storage):
+        self.hostlist = None
+        self.outdated = None
+        self.hostdata = {}
+        self.storage = storage
+        self.config = config
+        self.get_hostlist()
+        if self.config["single_host"] is not None:
+            self.narrow_down_hostlist()
+        self.get_all_hostdata()
+    
+    def get_hostlist(self):
+        hostlist, outdated = self.storage.get_hostlist()
+        if outdated == True or hostlist is None:
+            url = self.config['url']['hosts']
+            if self.config['debug']: print(f"Hostlist outdated or not existing, query from: {url}")
+            basic = requests.auth.HTTPBasicAuth(self.config['pmuser'], self.config['pmpass'])
+            try:
+                response = requests.get(url, auth=basic)
+            except Exception as err:
+                gently_exit(str(err), conf)
+            if response.status_code > 200:
+                gently_exit("Error retrieving host list. Got status code: " + str(response.status_code), conf)
+            hostlist = response.json()
+            outdated = False
+            self.storage.set_hostlist(hostlist)
+        self.hostlist = hostlist
+        self.outdated = outdated
+        
+    def narrow_down_hostlist(self):
+        tmp_hostlist = { "hosts" : [ ] }
+        for host in self.hostlist["hosts"]:
+            if self.config['name'] == "id" and host["id"] == self.config['single_host']:
+                tmp_hostlist["hosts"].append(host)
+            elif self.config['name'] == "hostname" and host["hostname"] == self.config['single_host']:
+                tmp_hostlist["hosts"].append(host)
+            elif host["friendly_name"] == self.config['single_host']:
+                tmp_hostlist["hosts"].append(host)
+        self.hostlist = tmp_hostlist
+        if self.config['debug']: print(f"Host list is now {self.hostlist}")
+    
+    def get_all_hostdata(self):
+        for host in self.hostlist["hosts"]:
+            self.hostdata[host["id"]] = SingleHost(self.config, self.storage, host["id"], host[self.config["name"]])
+            
+    def generate_output(self):
+        if self.config['no_output'] == True:
+            return
+        elif self.config['monitoring_plugin'] == True:
+            self.generate_monitoring_plugins_output()
+        elif self.config['zabbix'] is not None:
+            for host in self.hostlist["hosts"]:
+                self.hostdata[host["id"]].zabbix_send_traps()
+        else:
+            self.generate_checkmk_output()
+            
+    def generate_monitoring_plugins_output(self):
+        for host in self.hostlist["hosts"]:
+            self.hostdata[host["id"]].generate_monitoring_plugins_output()
+        if len(self.hostlist["hosts"]) < 1:
+            duration = time.time() - START_TIME
+            output = f"unable to determine, data missing | duration={duration:.3f}s;;;;"
+            print(output)
+            exit(3)
+            
+    def generate_checkmk_output(self):
+        for h in self.hostlist['hosts']:
+            if self.config['single_host'] is None: print('<<<<' + self.hostdata[h["id"]].hostname + '>>>>')
+            self.hostdata[h["id"]].generate_checkmk_output()
+            if self.config['single_host'] is None: print('<<<<>>>>')
+        t_end = time.time()
+        agentstats = {
+            "hoststotal": len(self.hostlist['hosts']),
+            "hostsskipped": 0,
+            "duration": t_end - START_TIME
+        }
+        print('<<<patchmon_server>>>')
+        print(json.dumps(agentstats))
+
+
+class AgentConfig:
+    def __init__(self):
+        self.config = {
+            'maxexec': 30,
+            'listage': 1800,
+            'hostage': 1800,
+            'name': 'friendly_name',
+            'states': [ 2, 1, 2 ],
+            'baseurl': None,
+            'secret': None,
+            'secret_id': None,
+            'baseurl': None,
+            'cache': None,
+            'single_host': None,
+            'monitoring_plugin': False,
+            'zabbix': None,
+            'zabbix_port': 10051,
+            'reboot': False,
+            'grace': False,
+            'no_output': False,
+            'debug': False,
+            'no_output': False,
+            'only_reboot': False,
+            'url' : {
+                "api": "{baseurl}/api/v1/api/hosts",
+                "host": "{baseurl}/hosts/{uuid}",
+                "hosts": None,
+                "stats": "{baseurl}/api/v1/api/hosts/{uuid}/stats",
+                "extra": "{baseurl}/api/v1/api/hosts/{uuid}/system",
+                "pkglist": "{baseurl}/api/v1/api/hosts/{uuid}/packages"
+            },
+        }
+        self.config = self.create_config(self.config)
+        self.check_config()
+        
+    def get_cli_arguments(self):
+        parser = argparse.ArgumentParser("agent_patchmon")
+        parser.add_argument(
+            "--baseurl",
+            help="Specify the baseurl for your PatchMon installation.",
+        )
+        parser.add_argument(
+            "--name",
+            help="Chose whether 'id', 'hostname' or 'friendly_name' should be used to create hostname. Default is 'friendly_name'.",
+        )
+        parser.add_argument(
+            # Only makes sense when used as Checkmk special agent with piggyback mode 
+            "--maxexec",
+            help="State a maximum time the special agent should take to retrieve patch details. Default is 30s. Irrelevant when querying a single host.",
+        )
+        parser.add_argument(
+            "--list",
+            help='State the interval (in seconds) host lists should be cached before retrieving them. Default is 1800s, +/-10 percent are randomly applied to avoid conflicts from parallel calls.',
+        )
+        parser.add_argument(
+            "--check",
+            help='State the interval (in seconds) patch info for a single hosts should stay cached before retrieving. Default is 1800s, +/-10 percent are randomly applied to avoid conflicts from parallel calls.',
+        )
+        parser.add_argument(
+            "--reboot",
+            help="If present, also query whether a reboot is required and ask for the reasons.",
+            action="store_true",
+        )
+        parser.add_argument(
+            "--grace",
+            help="Get the package list for being able to create a grace period in the check plugin.",
+            action="store_true",
+        )
+        parser.add_argument(
+            "--monitoring-plugin",
+            help="Behave as monitoring plug-in for Nagios and related systems like Icinga.",
+            action="store_true",
+        ),
+        parser.add_argument(
+            "--zabbix",
+            help="Act as a sender for the Zabbix trapper protocol. Takes the IP address of the Zabbix server as argument. This will try to set the items patchmon.updates, patchmon.security_updates and patchmon.reboot for each host.",
+        ),
+        parser.add_argument(
+            "--port",
+            help="Use together with --zabbix to specify the trapper port. If no port is specified, the default (10051) is used.",
+        ),
+        parser.add_argument(
+            "--only-reboot",
+            help="Only check whether reboot is required. Only effective in monitoring plug-in mode.",
+            action="store_true",
+        ),
+        parser.add_argument(
+            "--single-host",
+            help="Query only data for one host, this is necessary for using as monitoring-plugins.org compatible operation. If used in the special agent mode (Checkmk only), the output will not be wrapped in piggyback sections.",
+        ),
+        parser.add_argument(
+            "--cache",
+            help="Specify the directory to cache retrieved data.",
+        ),
+        parser.add_argument(
+            "--states",
+            help="Specify a comma separated list of the exit codes for: missing security updates, missing regular updates and a required reboot. The default is: 2,1,2.",
+        ),
+        parser.add_argument(
+            "--debug",
+            help="Print debug output. This might disturb what your monitoring system expects (except Zabbix where data is written to the trapper). So use only for testing and initializing the cache.",
+            action="store_true",
+        ),
+        parser.add_argument(
+            "--no-output",
+            help="Print no monitoring system related output. Use together with '--debug' to test the execution and initialyze the cache.",
+            action="store_true",
+        ),
+        try:
+            # Try the 2.5.0 helper:
+            cmk_parser_add_secret_option(
+                parser,
+                short="-s",
+                long="--secret",
+                help="Specify the id:token to log in to PatchMon.",
+                required=True
+            )
+        except NameError:
+            # Fall back to manually adding:
+            parser.add_argument(
+                "--secret-id",
+                help="Reference the ID of the secret as stored in the password store. Requires being run from Checkmk 2.3.0 or higher.",
+            )
+            # Fall back to manually adding:
+            parser.add_argument(
+                "--secret",
+                help="Specify the id:token to log in to PatchMon.",
+            )
+        return parser.parse_args()
+    
+    
+    def get_access_token(self, args):
+        userpass = None
+        try:
+            # The 2.5 method first: Checkmk cares for differentiating between plain password and store reference
+            userpass = resolve_secret_option(args, "secret").reveal().split(":")
+            return userpass
+        except:
+            # We have Checkmk 2.4 or 2.3 where the password store is an internal API
+            # Here we have to differentiate between the two possible parameters
+            if args.secret_id:
+                store_reference = args.secret_id.split(":")[0]
+                try:
+                    userpass = legacy_pw_store.lookup(legacy_pw_store.password_store_path(), store_reference).split(":")
+                    return userpass
+                except:
+                    # Either the lookup failed (Checkmk 2.3 and explicit password) or the legacy_pw_store is not available.
+                    # In such cases, assume that a plain password was passed
+                    userpass = args.secret_id.split(":")[0]
+                    return userpass
+            else:
+                userpass = args.secret.split(":")
+                return userpass
+    
+    def create_config(self, cfg):
+        config = cfg
+        args = self.get_cli_arguments()
+        # Create config for regular arguments
+        if args.monitoring_plugin: config['monitoring_plugin'] = True
+        if args.maxexec: config['maxexec'] = int(args.maxexec)
+        if args.list: config['listage'] = int(args.list)
+        if args.check: config['hostage'] = int(args.check)
+        if args.baseurl: config['baseurl'] = args.baseurl
+        if args.secret: config['secret'] = args.secret
+        if args.secret_id: config['secret_id'] = args.secret_id
+        if args.baseurl: config['baseurl'] = args.baseurl
+        if args.cache: config['cache'] = args.cache
+        if args.single_host: config['single_host'] = args.single_host
+        if args.zabbix: config['zabbix'] = args.zabbix
+        if args.debug: config['debug'] = args.debug
+        if args.no_output: config['no_output'] = args.no_output
+        if args.port: config['port'] = 10051
+        if args.reboot: config['reboot'] = args.reboot
+        if args.only_reboot: config['only_reboot'] = args.only_reboot
+        if args.grace: config['grace'] = args.grace
+        if args.single_host: config['single_host'] = args.single_host
+        if args.states:
+            n = 0
+            for s in args.states.split(','):
+                config['states'][n] = int(s)
+                n += 1
+        # Now retrieve username and password:
+        userpass = self.get_access_token(args)
+        config['pmuser'] = userpass[0]
+        config['pmpass'] = userpass[1]
+        # Derive the key for the storage from the user name
+        h = hashlib.sha256()
+        h.update(userpass[0].encode("utf-8"))
+        config['storkey'] = h.hexdigest()
+        config["url"]["hosts"] = config["url"]["api"].format(baseurl=args.baseurl)
+        for k in [ 'listage', 'hostage' ]:
+            rnd = random.random()
+            fac = 0.9 + rnd / 5.0
+            config[k] = int(config[k] * fac)
+        return config
+        
+    def check_config(self):
+        if self.config["monitoring_plugin"] == True:
+            self.check_config_monitoring_plugin()
+            
+    def check_config_monitoring_plugin(self):
+        t_end = time.time()
+        config = self.config
+        duration = t_end - START_TIME
+        if config['baseurl'] is None:
+            output = f"query failed | duration={duration:.3f}s;;;;\nSpecify the base URL for your patchmon server including the protocol ('http://' or 'https://'), but without the trailing slash with the CLI option --baseurl."
+            print(output)
+            exit(3)
+        if (config['secret'] is None and config['secret_id'] is None):
+            output = f"query failed | duration={duration:.3f}s;;;;\nSpecify colon separated user:pass pair with the CLI option --secret."
+            print(output)
+            exit(3)
+        if config['cache'] is None:
+            output = f"query failed | duration={duration:.3f}s;;;;\nSpecify a cache directory to store the host list and the patch states with the CLI option --cache."
+            print(output)
+            exit(3)
+        if config['single_host'] is None:
+            output = f"query failed | duration={duration:.3f}s;;;;\nSpecify the host for which to query for updates with the CLI option --single-host."
+            print(output)
+            exit(3)
 
 
 def parse_uuid(raw: str) -> uuid.UUID | None:
@@ -183,19 +641,19 @@ def parse_uuid(raw: str) -> uuid.UUID | None:
         return None
 
 
-def prepare_cache(keyid, args):
-    # A directory is created for all cached data, the baseurl is sanitized from all slashes
-    # to make sure no path traversal is possible
-    h = hashlib.sha256()
-    h.update(keyid.encode("utf-8"))
-    sanitized_host = h.hexdigest()
-    if args.cache:
-        path = args.cache + "/" + sanitized_host
-    else:
-        path = os.environ['OMD_ROOT'] + "/tmp/patchmon/" + sanitized_host
-    tmpdir = Path(path)
-    tmpdir.mkdir(parents=True, exist_ok=True)
-    return path
+#~ def prepare_cache(keyid, args):
+    #~ # A directory is created for all cached data, the baseurl is sanitized from all slashes
+    #~ # to make sure no path traversal is possible
+    #~ h = hashlib.sha256()
+    #~ h.update(keyid.encode("utf-8"))
+    #~ sanitized_host = h.hexdigest()
+    #~ if args.cache:
+        #~ path = args.cache + "/" + sanitized_host
+    #~ else:
+        #~ path = os.environ['OMD_ROOT'] + "/tmp/patchmon/" + sanitized_host
+    #~ tmpdir = Path(path)
+    #~ tmpdir.mkdir(parents=True, exist_ok=True)
+    #~ return path
 
 
 def gently_exit(error_msg, conf):
@@ -209,240 +667,193 @@ def gently_exit(error_msg, conf):
     exit(0)
 
 
-def retrieve_hostlist(auth, url, conf):
-    try:
-        response = requests.get(url, auth=basic)
-    except Exception as err:
-        gently_exit(str(err), conf)
-    if response.status_code > 200:
-        gently_exit("Error retrieving host list. Got status code: " + str(response.status_code), conf)
-    j = response.json()
-    return j
-    
-
-def get_hostlist_from_fs(auth, url, maxage, path, conf):
-    hostlist = path + "/hostlist.json"
-    if os.path.exists(hostlist):
-        if time.time() - os.path.getmtime(hostlist) < maxage:
-            with open(hostlist, "r") as file:
-                c = file.read()
-                j = json.loads(c)
-                return j
-    j = retrieve_hostlist(auth, url, conf)
-    with open(hostlist, "w") as file:
-        file.write(json.dumps(j))
-    return j
+#~ def get_hostlist(config, storage):
+    #~ hostlist, outdated = storage.get_hostlist()
+    #~ if outdated == True or hostlist is None:
+        #~ url = config['url']['hosts']
+        #~ if config['debug']: print(f"Hostlist outdated or not existing, query from: {url}")
+        #~ basic = requests.auth.HTTPBasicAuth(config['pmuser'], config['pmpass'])
+        #~ try:
+            #~ response = requests.get(url, auth=basic)
+        #~ except Exception as err:
+            #~ gently_exit(str(err), conf)
+        #~ if response.status_code > 200:
+            #~ gently_exit("Error retrieving host list. Got status code: " + str(response.status_code), conf)
+        #~ hostlist = response.json()
+        #~ outdated = False
+        #~ storage.set_hostlist(hostlist)
+    #~ return hostlist, outdated
 
 
-def get_hostlist_from_storage(auth, url, maxage, storage, conf):
-    jstr = storage.read("hostlist", None)
-    if jstr:
-        return json.loads(jstr)
-    j = retrieve_hostlist(auth, url, conf)
-    storage.unset(hostlist)
-    storage.write("hostlist", json.dumps(j))
-    return j
+#~ def retrieve_hoststat(auth, url, conf):
+    #~ error = 'Error retrieving host statistics. Since this happened after retrieving '\
+        #~ 'the host list, this is most likely caused by an outdated version of PatchMon. '
+    #~ try:
+        #~ response = requests.get(url, auth=basic)
+    #~ except Exception as err:
+        #~ gently_exit(error + str(err), conf)
+    #~ if response.status_code > 200:
+        #~ gently_exit(error + "Got status code: " + str(response.status_code), conf)
+    #~ j = response.json()
+    #~ return j
 
 
-def get_hostlist(auth, url, maxage, storage, path, conf):
-    if storage:
-        return get_hostlist_from_storage(auth, url, maxage, storage, conf)
-    else:
-        return get_hostlist_from_fs(auth, url, maxage, path, conf)
+#~ def retrieve_hostextra(auth, extraurl, conf):
+    #~ error = 'Error retrieving host details. Since this happened after retrieving '\
+        #~ 'the host list, this is most likely caused by an outdated version of PatchMon. '
+    #~ try:
+        #~ response = requests.get(extraurl, auth=basic)
+    #~ except Exception as err:
+        #~ gently_exit(error + str(err), conf)
+    #~ if response.status_code > 200:
+        #~ gently_exit(error + "Got status code: " + str(response.status_code), conf)
+    #~ j = response.json()
+    #~ return j
 
 
-def retrieve_hoststat(auth, url, conf):
-    error = 'Error retrieving host statistics. Since this happened after retrieving '\
-        'the host list, this is most likely caused by an outdated version of PatchMon. '
-    try:
-        response = requests.get(url, auth=basic)
-    except Exception as err:
-        gently_exit(error + str(err), conf)
-    if response.status_code > 200:
-        gently_exit(error + "Got status code: " + str(response.status_code), conf)
-    j = response.json()
-    return j
+#~ def retrieve_pkglist(auth, pkglisturl, oldpackages, conf):
+    #~ error = 'Error retrieving package list. Since this happened after retrieving '\
+        #~ 'the host list, this is most likely caused by an outdated version of PatchMon. '
+    #~ try:
+        #~ response = requests.get(pkglisturl, auth=basic, params={"updates_only": "true"})
+    #~ except Exception as err:
+        #~ gently_exit(error + str(err), conf)
+    #~ if response.status_code > 200:
+        #~ gently_exit(error + "Got status code: " + str(response.status_code), conf)
+    #~ j = response.json()["packages"]
+    #~ plist = compare_pkglist(j, oldpackages)
+    #~ return plist
 
 
-def retrieve_hostextra(auth, extraurl, conf):
-    error = 'Error retrieving host details. Since this happened after retrieving '\
-        'the host list, this is most likely caused by an outdated version of PatchMon. '
-    try:
-        response = requests.get(extraurl, auth=basic)
-    except Exception as err:
-        gently_exit(error + str(err), conf)
-    if response.status_code > 200:
-        gently_exit(error + "Got status code: " + str(response.status_code), conf)
-    j = response.json()
-    return j
-
-
-def retrieve_pkglist(auth, pkglisturl, oldpackages, conf):
-    error = 'Error retrieving package list. Since this happened after retrieving '\
-        'the host list, this is most likely caused by an outdated version of PatchMon. '
-    try:
-        response = requests.get(pkglisturl, auth=basic, params={"updates_only": "true"})
-    except Exception as err:
-        gently_exit(error + str(err), conf)
-    if response.status_code > 200:
-        gently_exit(error + "Got status code: " + str(response.status_code), conf)
-    j = response.json()["packages"]
-    plist = compare_pkglist(j, oldpackages)
-    return plist
-
-
-def compare_pkglist(packages, oldpackages):
-    t_now = time.time()
-    plist = {}
-    for p in packages:
-        if p["name"] in oldpackages:
-            pmeta = oldpackages[p["name"]]
-            if oldpackages[p["name"]]["is_security_update"] is True:
-                pmeta["is_security_update"] = True
-        else:
-            pmeta = { 
-                "is_security_update": p["is_security_update"],
-                "first_seen" : t_now,
-            }
-        plist[p["name"]] = pmeta
-    return plist
+#~ def compare_pkglist(packages, oldpackages):
+    #~ t_now = time.time()
+    #~ plist = {}
+    #~ for p in packages:
+        #~ if p["name"] in oldpackages:
+            #~ pmeta = oldpackages[p["name"]]
+            #~ if oldpackages[p["name"]]["is_security_update"] is True:
+                #~ pmeta["is_security_update"] = True
+        #~ else:
+            #~ pmeta = { 
+                #~ "is_security_update": p["is_security_update"],
+                #~ "first_seen" : t_now,
+            #~ }
+        #~ plist[p["name"]] = pmeta
+    #~ return plist
         
     
-def get_all_hostsmeta_from_fs(hostlist, maxage, path):
-    stats = {
-        "oldhosts": [],
-        "missinghosts": [],
-        "hostdata": {},
-        "hostsskipped": 0,
-    }
-    for h in hostlist['hosts']:
-        hostid = h['id']
-        # Validating the UUID makes sure, no crafted id field can be used to
-        # read and write in the site file system
-        if parse_uuid(hostid):
-            hostjson = path + "/" + hostid + ".json"
-            if os.path.exists(hostjson):
-                fileage = time.time() - os.path.getmtime(hostjson)
-                with open(hostjson, "r") as file:
-                    c = file.read()
-                    j = json.loads(c)
-                    j['fileage'] = fileage
-                    j['maxage'] = maxage
-                    stats['hostdata'][hostid] = j
-                if fileage > maxage:
-                    stats['oldhosts'].append(hostid)
-            else:
-                stats['missinghosts'].append(hostid)
-    return stats
+#~ def get_all_hostsmeta_from_fs(hostlist, maxage, path):
+    #~ stats = {
+        #~ "oldhosts": [],
+        #~ "missinghosts": [],
+        #~ "hostdata": {},
+        #~ "hostsskipped": 0,
+    #~ }
+    #~ for h in hostlist['hosts']:
+        #~ hostid = h['id']
+        #~ # Validating the UUID makes sure, no crafted id field can be used to
+        #~ # read and write in the site file system
+        #~ if parse_uuid(hostid):
+            #~ hostjson = path + "/" + hostid + ".json"
+            #~ if os.path.exists(hostjson):
+                #~ fileage = time.time() - os.path.getmtime(hostjson)
+                #~ with open(hostjson, "r") as file:
+                    #~ c = file.read()
+                    #~ j = json.loads(c)
+                    #~ j['fileage'] = fileage
+                    #~ j['maxage'] = maxage
+                    #~ stats['hostdata'][hostid] = j
+                #~ if fileage > maxage:
+                    #~ stats['oldhosts'].append(hostid)
+            #~ else:
+                #~ stats['missinghosts'].append(hostid)
+    #~ return stats
 
 
-def get_all_hostsmeta_from_storage(hostlist, maxage, storage):
-    stats = {
-        "oldhosts": [],
-        "missinghosts": [],
-        "hostdata": {},
-        "hostsskipped": 0,
-    }
-    for h in hostlist['hosts']:
-        hostid = h['id']
-        if parse_uuid(hostid):
-            # storage.unset(hostid)
-            jsdata = storage.read(hostid, None)
-            if jsdata:
-                j = json.loads(jsdata)
-                fileage = time.time() - j['timestamp']
-                j['fileage'] = fileage
-                j['maxage'] = maxage
-                stats['hostdata'][hostid] = j
-                if fileage > maxage:
-                    stats['oldhosts'].append(hostid)
-            else:
-                stats['missinghosts'].append(hostid)
-    return stats
+#~ def get_all_hostsmeta_from_storage(hostlist, maxage, storage):
+    #~ stats = {
+        #~ "oldhosts": [],
+        #~ "missinghosts": [],
+        #~ "hostdata": {},
+        #~ "hostsskipped": 0,
+    #~ }
+    #~ for h in hostlist['hosts']:
+        #~ hostid = h['id']
+        #~ if parse_uuid(hostid):
+            #~ # storage.unset(hostid)
+            #~ jsdata = storage.read(hostid, None)
+            #~ if jsdata:
+                #~ j = json.loads(jsdata)
+                #~ fileage = time.time() - j['timestamp']
+                #~ j['fileage'] = fileage
+                #~ j['maxage'] = maxage
+                #~ stats['hostdata'][hostid] = j
+                #~ if fileage > maxage:
+                    #~ stats['oldhosts'].append(hostid)
+            #~ else:
+                #~ stats['missinghosts'].append(hostid)
+    #~ return stats
 
 
-def narrow_down_hostlist(hostlist, fullhostlist, args):
-    resultlist = hostlist
-    if args.single_host:
-        resultlist = []
-        for host in fullhostlist["hosts"]:
-            if host["id"] in hostlist:
-                if args.name == "id" and host["id"] == args.single_host:
-                    return [ host["id"] ]
-                elif args.name == "hostname" and host["hostname"] == args.single_host:
-                    return [ host["id"] ]
-                elif host["friendly_name"] == args.single_host:
-                    return [ host["id"] ]
-    return resultlist
+#~ def narrow_down_hostlist(hostlist, fullhostlist, args):
+    #~ resultlist = hostlist
+    #~ if args.single_host:
+        #~ resultlist = []
+        #~ for host in fullhostlist["hosts"]:
+            #~ if host["id"] in hostlist:
+                #~ if args.name == "id" and host["id"] == args.single_host:
+                    #~ return [ host["id"] ]
+                #~ elif args.name == "hostname" and host["hostname"] == args.single_host:
+                    #~ return [ host["id"] ]
+                #~ elif host["friendly_name"] == args.single_host:
+                    #~ return [ host["id"] ]
+    #~ return resultlist
 
 
-def get_all_hoststats(auth, urls, hostlist, maxage, maxexec, storage, path, args, conf):
-    url = urls["stats"]
-    xurl = urls["extra"]
-    if storage:
-        stats = get_all_hostsmeta_from_storage(hostlist, maxage, storage)
-    else:
-        stats = get_all_hostsmeta_from_fs(hostlist, maxage, path)
-    tstart = time.time()
-    retrievehostlist = stats['missinghosts'] + stats['oldhosts']
-    retrievehostlist = narrow_down_hostlist(retrievehostlist, hostlist, args)
-    for hostid in retrievehostlist:
-        if time.time() - tstart < maxexec:
-            statsurl = url.format(baseurl=args.baseurl, uuid=hostid)
-            extraurl = xurl.format(baseurl=args.baseurl, uuid=hostid)
-            j = retrieve_hoststat(auth, statsurl, conf)
-            # Retrieving extra data like reboot required needs another API call
-            if args.reboot:
-                x = retrieve_hostextra(auth, extraurl, conf)
-                j['needs_reboot'] = 1 if x['needs_reboot'] else 0
-                j['reboot_reason'] = str(x['reboot_reason'])
-            if args.grace and j['outdated_packages'] > 0:
-                pkglisturl = urls["pkglist"].format(baseurl=args.baseurl, uuid=hostid)
-                oldpackages = {}
-                if hostid in stats['hostdata'] and "packages" in stats['hostdata'][hostid]:
-                    oldpackages = stats['hostdata'][hostid]["packages"]
-                x = retrieve_pkglist(auth, pkglisturl, oldpackages, conf)
-                j["packages"] = x
-            else:
-                j["packages"] = {}
-            j['timestamp'] = time.time()
-            if storage:
-                storage.unset(hostid)
-                storage.write(hostid, json.dumps(j))
-            else:
-                hostjson = path + "/" + hostid + ".json"
-                with open(hostjson, "w") as file:
-                    file.write(json.dumps(j))
-            j['fileage'] = 0.0
-            j['maxage'] = maxage
-            stats['hostdata'][hostid] = j
-        else:
-            stats['hostsskipped'] += 1
-    return stats
+#~ def get_all_hoststats(auth, urls, hostlist, maxage, maxexec, storage, path, args, conf):
+    #~ url = urls["stats"]
+    #~ xurl = urls["extra"]
+    #~ if storage:
+        #~ stats = get_all_hostsmeta_from_storage(hostlist, maxage, storage)
+    #~ else:
+        #~ stats = get_all_hostsmeta_from_fs(hostlist, maxage, path)
+    #~ tstart = time.time()
+    #~ retrievehostlist = stats['missinghosts'] + stats['oldhosts']
+    #~ retrievehostlist = narrow_down_hostlist(retrievehostlist, hostlist, args)
+    #~ for hostid in retrievehostlist:
+        #~ if time.time() - tstart < maxexec:
+            #~ statsurl = url.format(baseurl=args.baseurl, uuid=hostid)
+            #~ extraurl = xurl.format(baseurl=args.baseurl, uuid=hostid)
+            #~ j = retrieve_hoststat(auth, statsurl, conf)
+            #~ # Retrieving extra data like reboot required needs another API call
+            #~ if args.reboot:
+                #~ x = retrieve_hostextra(auth, extraurl, conf)
+                #~ j['needs_reboot'] = 1 if x['needs_reboot'] else 0
+                #~ j['reboot_reason'] = str(x['reboot_reason'])
+            #~ if args.grace and j['outdated_packages'] > 0:
+                #~ pkglisturl = urls["pkglist"].format(baseurl=args.baseurl, uuid=hostid)
+                #~ oldpackages = {}
+                #~ if hostid in stats['hostdata'] and "packages" in stats['hostdata'][hostid]:
+                    #~ oldpackages = stats['hostdata'][hostid]["packages"]
+                #~ x = retrieve_pkglist(auth, pkglisturl, oldpackages, conf)
+                #~ j["packages"] = x
+            #~ else:
+                #~ j["packages"] = {}
+            #~ j['timestamp'] = time.time()
+            #~ if storage:
+                #~ storage.unset(hostid)
+                #~ storage.write(hostid, json.dumps(j))
+            #~ else:
+                #~ hostjson = path + "/" + hostid + ".json"
+                #~ with open(hostjson, "w") as file:
+                    #~ file.write(json.dumps(j))
+            #~ j['fileage'] = 0.0
+            #~ j['maxage'] = maxage
+            #~ stats['hostdata'][hostid] = j
+        #~ else:
+            #~ stats['hostsskipped'] += 1
+    #~ return stats
 
-
-def get_access_token(args):
-    userpass = None
-    try:
-        # The 2.5 method first: Checkmk cares for differentiating between plain password and store reference
-        userpass = resolve_secret_option(args, "secret").reveal().split(":")
-        return userpass
-    except:
-        # We have Checkmk 2.4 or 2.3 where the password store is an internal API
-        # Here we have to differentiate between the two possible parameters
-        if args.secret_id:
-            store_reference = args.secret_id.split(":")[0]
-            try:
-                userpass = legacy_pw_store.lookup(legacy_pw_store.password_store_path(), store_reference).split(":")
-                return userpass
-            except:
-                # Either the lookup failed (Checkmk 2.3 and explicit password) or the legacy_pw_store is not available.
-                # In such cases, assume that a plain password was passed
-                userpass = args.secret_id.split(":")[0]
-                return userpass
-        else:
-            userpass = args.secret.split(":")
-            return userpass
 
 def get_hostid(hostlist, args):
     for host in hostlist['hosts']:
@@ -454,149 +865,164 @@ def get_hostid(hostlist, args):
             return host["id"]
 
 
-def generate_monitoring_plugins_output(hostlist, allstats, args, t_start, conf):
-    hostid = get_hostid(hostlist, args)
-    if hostid is None:
-        t_end = time.time()
-        duration = t_end - t_start
-        output = f"query failed | duration={duration:.3f}s;;;;\nThe host you specified with the CLI option --single-host does not seem to exist. If it's a fresh host, you have to wait until the cached host list has been invalidated."
-        print(output)
-        exit(3)
-    host_data = allstats['hostdata'][hostid]
-    if args.only_reboot:
-        generate_monitoring_plugins_output_reboot(host_data, t_start, conf)
-    else:
-        generate_monitoring_plugins_output_patches(host_data, t_start, conf)
+#~ def generate_monitoring_plugins_output(hostlist, allstats, args, t_start, conf):
+    #~ hostid = get_hostid(hostlist, args)
+    #~ if hostid is None:
+        #~ t_end = time.time()
+        #~ duration = t_end - t_start
+        #~ output = f"query failed | duration={duration:.3f}s;;;;\nThe host you specified with the CLI option --single-host does not seem to exist. If it's a fresh host, you have to wait until the cached host list has been invalidated."
+        #~ print(output)
+        #~ exit(3)
+    #~ host_data = allstats['hostdata'][hostid]
+    #~ if args.only_reboot:
+        #~ generate_monitoring_plugins_output_reboot(host_data, t_start, conf)
+    #~ else:
+        #~ generate_monitoring_plugins_output_patches(host_data, t_start, conf)
     
 
-def generate_monitoring_plugins_output_reboot(host_data, t_start, conf):
-    t_end = time.time()
-    duration = t_end - t_start
-    if not 'needs_reboot' in host_data:
-        output = f"query failed | duration={duration:.3f}s;;;;\nThe needs_reboot flag in the cached data is missing. This is most likely due to two checks (one for patches and one for reboots being run on a single host. Add the CLI flag --reboot also to the check for patches to query and cache the needs_reboot flog."
-        print(output)
-        exit(3)
-    if host_data['needs_reboot'] > 0:
-        reboot_reason = host_data['reboot_reason'].replace('|', '')
-        output = f"reboot required | duration={duration:.3f}s;;;;\nReason given: {reboot_reason}"
-        print(output)
-        exit(conf['states'][2])
-    else:
-        output = f"no reboot required | duration={duration:.3f}s;;;;"
-        print(output)
-        exit(0)
+#~ def generate_monitoring_plugins_output_reboot(host_data, t_start, conf):
+    #~ t_end = time.time()
+    #~ duration = t_end - t_start
+    #~ if not 'needs_reboot' in host_data:
+        #~ output = f"query failed | duration={duration:.3f}s;;;;\nThe needs_reboot flag in the cached data is missing. This is most likely due to two checks (one for patches and one for reboots being run on a single host. Add the CLI flag --reboot also to the check for patches to query and cache the needs_reboot flog."
+        #~ print(output)
+        #~ exit(3)
+    #~ if host_data['needs_reboot'] > 0:
+        #~ reboot_reason = host_data['reboot_reason'].replace('|', '')
+        #~ output = f"reboot required | duration={duration:.3f}s;;;;\nReason given: {reboot_reason}"
+        #~ print(output)
+        #~ exit(conf['states'][2])
+    #~ else:
+        #~ output = f"no reboot required | duration={duration:.3f}s;;;;"
+        #~ print(output)
+        #~ exit(0)
 
 
-def generate_monitoring_plugins_output_patches(host_data, t_start, conf):
-    t_end = time.time()
-    duration = t_end - t_start
-    if host_data['security_updates'] > 0:
-        output = f"security updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;\n{host_data['security_updates']} security updates are missing, in total {host_data['outdated_packages']} updates are missing."
-        print(output)
-        exit(conf['states'][0])
-    elif host_data['outdated_packages'] > 0:
-        output = f"updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;\n{host_data['outdated_packages']} updates are missing, none of those are security updates."
-        print(output)
-        exit(conf['states'][1])
-    else:
-        output = f"no updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;"
-        print(output)
-        exit(0)
+#~ def generate_monitoring_plugins_output_patches(host_data, t_start, conf):
+    #~ t_end = time.time()
+    #~ duration = t_end - t_start
+    #~ if host_data['security_updates'] > 0:
+        #~ output = f"security updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;\n{host_data['security_updates']} security updates are missing, in total {host_data['outdated_packages']} updates are missing."
+        #~ print(output)
+        #~ exit(conf['states'][0])
+    #~ elif host_data['outdated_packages'] > 0:
+        #~ output = f"updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;\n{host_data['outdated_packages']} updates are missing, none of those are security updates."
+        #~ print(output)
+        #~ exit(conf['states'][1])
+    #~ else:
+        #~ output = f"no updates missing | security_updates={host_data['security_updates']};;;; total_updates={host_data['outdated_packages']};;;; duration={duration:.3f}s;;;;"
+        #~ print(output)
+        #~ exit(0)
 
 
-def generate_checkmk_output(hostlist, allstats, args, t_start):
-    t_end = time.time()
-    for h in hostlist['hosts']:
-        print('<<<<' + h[args.name] + '>>>>')
-        print('<<<patchmon_patches>>>')
-        try:
-            allstats['hostdata'][h['id']]['url'] = urls["host"].format(baseurl=args.baseurl.rstrip('/'), uuid=h['id'])
-            print(json.dumps(allstats['hostdata'][h['id']]))
-            print('<<<labels:sep(0)>>>')
-            print('{"patchmon/monitored":"true"}')
-        except KeyError:
-            print('{ "error": "No data" }')
-        print('<<<<>>>>')
+#~ def generate_checkmk_output(hostlist, allstats, args, t_start):
+    #~ t_end = time.time()
+    #~ for h in hostlist['hosts']:
+        #~ print('<<<<' + h[args.name] + '>>>>')
+        #~ print('<<<patchmon_patches>>>')
+        #~ try:
+            #~ allstats['hostdata'][h['id']]['url'] = urls["host"].format(baseurl=args.baseurl.rstrip('/'), uuid=h['id'])
+            #~ print(json.dumps(allstats['hostdata'][h['id']]))
+            #~ print('<<<labels:sep(0)>>>')
+            #~ print('{"patchmon/monitored":"true"}')
+        #~ except KeyError:
+            #~ print('{ "error": "No data" }')
+        #~ print('<<<<>>>>')
 
-    t_end = time.time()
-    agentstats = {
-        "hoststotal": len(hostlist['hosts']),
-        "hostsskipped": allstats["hostsskipped"],
-        "duration": t_end - t_start
-    }
-    print('<<<patchmon_server>>>')
-    print(json.dumps(agentstats))
+    #~ t_end = time.time()
+    #~ agentstats = {
+        #~ "hoststotal": len(hostlist['hosts']),
+        #~ "hostsskipped": allstats["hostsskipped"],
+        #~ "duration": t_end - t_start
+    #~ }
+    #~ print('<<<patchmon_server>>>')
+    #~ print(json.dumps(agentstats))
 
 
-def check_monitoring_plugins_parameters(config, t_start):
-    t_end = time.time()
-    duration = t_end - t_start
-    if config['baseurl'] is None:
-        output = f"query failed | duration={duration:.3f}s;;;;\nSpecify the base URL for your patchmon server including the protocol ('http://' or 'https://'), but without the trailing slash with the CLI option --baseurl."
-        print(output)
-        exit(3)
-    if (config['secret'] is None and config['secret_id'] is None):
-        output = f"query failed | duration={duration:.3f}s;;;;\nSpecify colon separated user:pass pair with the CLI option --secret."
-        print(output)
-        exit(3)
-    if config['cache'] is None:
-        output = f"query failed | duration={duration:.3f}s;;;;\nSpecify a cache directory to store the host list and the patch states with the CLI option --cache."
-        print(output)
-        exit(3)
-    if config['single_host'] is None:
-        output = f"query failed | duration={duration:.3f}s;;;;\nSpecify the host for which to query for updates with the CLI option --single-host."
-        print(output)
-        exit(3)
+#~ def check_monitoring_plugins_parameters(config, t_start):
+    #~ t_end = time.time()
+    #~ duration = t_end - t_start
+    #~ if config['baseurl'] is None:
+        #~ output = f"query failed | duration={duration:.3f}s;;;;\nSpecify the base URL for your patchmon server including the protocol ('http://' or 'https://'), but without the trailing slash with the CLI option --baseurl."
+        #~ print(output)
+        #~ exit(3)
+    #~ if (config['secret'] is None and config['secret_id'] is None):
+        #~ output = f"query failed | duration={duration:.3f}s;;;;\nSpecify colon separated user:pass pair with the CLI option --secret."
+        #~ print(output)
+        #~ exit(3)
+    #~ if config['cache'] is None:
+        #~ output = f"query failed | duration={duration:.3f}s;;;;\nSpecify a cache directory to store the host list and the patch states with the CLI option --cache."
+        #~ print(output)
+        #~ exit(3)
+    #~ if config['single_host'] is None:
+        #~ output = f"query failed | duration={duration:.3f}s;;;;\nSpecify the host for which to query for updates with the CLI option --single-host."
+        #~ print(output)
+        #~ exit(3)
         
-def zabbix_send_traps(hostlist, allstats, conf, t_start):
-    for h in hostlist['hosts']:
-        now = time.time()
-        try:
-            print(f"Trying to set Zabbix items for {h[conf['name']]}")
-            allstats['hostdata'][h['id']]['url'] = urls["host"].format(baseurl=args.baseurl.rstrip('/'), uuid=h['id'])
-            sender = ZabbixSender(server=conf['zabbix'], port=conf['zabbix_port'])
-            res = sender.send_value(
-                h[conf['name']], 
-                'patchmon.updates',
-                allstats['hostdata'][h['id']]['outdated_packages'],
-                now
-            )
-            if res.failed > 0:
-                print(f"Failed setting patchmon.updates for {h[conf['name']]}")
-            res = sender.send_value(
-                h[conf['name']], 
-                'patchmon.security_updates',
-                allstats['hostdata'][h['id']]['security_updates'],
-                now
-            )
-            if res.failed > 0:
-                print(f"Failed setting patchmon.security_updates for {h[conf['name']]}")
-            if "needs_reboot" in allstats['hostdata'][h['id']]:
-                res = sender.send_value(
-                    h[conf['name']], 
-                    'patchmon.reboot',
-                    allstats['hostdata'][h['id']]['needs_reboot'],
-                    now
-                )
-                if res.failed > 0:
-                    print(f"Failed setting patchmon.reboot for {h[conf['name']]}")
-        except KeyError:
-            print(f"ERROR: No data for {h[conf['name']]}")
+#~ def zabbix_send_traps(hostlist, allstats, conf, t_start):
+    #~ for h in hostlist['hosts']:
+        #~ now = time.time()
+        #~ try:
+            #~ print(f"Trying to set Zabbix items for {h[conf['name']]}")
+            #~ allstats['hostdata'][h['id']]['url'] = urls["host"].format(baseurl=args.baseurl.rstrip('/'), uuid=h['id'])
+            #~ sender = ZabbixSender(server=conf['zabbix'], port=conf['zabbix_port'])
+            #~ res = sender.send_value(
+                #~ h[conf['name']], 
+                #~ 'patchmon.updates',
+                #~ allstats['hostdata'][h['id']]['outdated_packages'],
+                #~ now
+            #~ )
+            #~ if res.failed > 0:
+                #~ print(f"Failed setting patchmon.updates for {h[conf['name']]}")
+            #~ res = sender.send_value(
+                #~ h[conf['name']], 
+                #~ 'patchmon.security_updates',
+                #~ allstats['hostdata'][h['id']]['security_updates'],
+                #~ now
+            #~ )
+            #~ if res.failed > 0:
+                #~ print(f"Failed setting patchmon.security_updates for {h[conf['name']]}")
+            #~ if "needs_reboot" in allstats['hostdata'][h['id']]:
+                #~ res = sender.send_value(
+                    #~ h[conf['name']], 
+                    #~ 'patchmon.reboot',
+                    #~ allstats['hostdata'][h['id']]['needs_reboot'],
+                    #~ now
+                #~ )
+                #~ if res.failed > 0:
+                    #~ print(f"Failed setting patchmon.reboot for {h[conf['name']]}")
+        #~ except KeyError:
+            #~ print(f"ERROR: No data for {h[conf['name']]}")
     # t_end = time.time()
 
         
-urls = {
-    "api": "{baseurl}/api/v1/api/hosts",
-    "host": "{baseurl}/hosts/{uuid}",
-    "hosts": None,
-    "stats": "{baseurl}/api/v1/api/hosts/{uuid}/stats",
-    "extra": "{baseurl}/api/v1/api/hosts/{uuid}/system",
-    "pkglist": "{baseurl}/api/v1/api/hosts/{uuid}/packages"
-}
+#~ urls = {
+    #~ "api": "{baseurl}/api/v1/api/hosts",
+    #~ "host": "{baseurl}/hosts/{uuid}",
+    #~ "hosts": None,
+    #~ "stats": "{baseurl}/api/v1/api/hosts/{uuid}/stats",
+    #~ "extra": "{baseurl}/api/v1/api/hosts/{uuid}/system",
+    #~ "pkglist": "{baseurl}/api/v1/api/hosts/{uuid}/packages"
+#~ }
 
-t_start = time.time()
-args = get_cli_arguments()
-conf = create_config(args)
+START_TIME = time.time()
+agconf = AgentConfig()
+conf = agconf.config
+storage = Storage(conf)
+
+# Now get the hostlist
+hostlist = AllHosts(conf, storage)
+hostlist.generate_output()
+# print(hostlist.hostlist)
+
+
+# hostdata, outdated = storage.get_host("0625a342-52db-4877-aa0c-e31d4a5ae122")
+# print(hostdata)
+
+# testhost = SingleHost(conf, storage, "0625a342-52db-4877-aa0c-e31d4a5ae122")
+# testhost.populate()
+
+exit(0)
 
 if args.monitoring_plugin:
     check_monitoring_plugins_parameters(conf, t_start)  
