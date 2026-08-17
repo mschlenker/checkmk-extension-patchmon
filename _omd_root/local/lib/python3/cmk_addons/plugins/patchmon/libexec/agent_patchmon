@@ -318,9 +318,9 @@ class SingleHost:
                     now
                 )
                 if res.failed > 0:
-                    print(f"Failed setting patchmon.reboot for {h[conf['name']]}")
+                    print(f"Failed setting patchmon.reboot for {self.hostname}")
         except KeyError:
-            print(f"ERROR: No data for {h[conf['name']]}")
+            print(f"ERROR: No data for {self.hostname}")
     
     def generate_checkmk_output(self):
         print('<<<patchmon_patches>>>')
