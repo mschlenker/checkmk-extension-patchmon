@@ -564,7 +564,10 @@ class AgentConfig:
                     userpass = args.secret_id.split(":")[0]
                     return userpass
             else:
-                userpass = args.secret.split(":")
+                try:
+                    userpass = args.secret.split(":")
+                except AttributeError:
+                    return [ None, None ]
                 return userpass
     
     def create_config(self, cfg):
@@ -600,7 +603,7 @@ class AgentConfig:
         config['pmpass'] = userpass[1]
         # Derive the key for the storage from the user name
         h = hashlib.sha256()
-        h.update(userpass[0].encode("utf-8"))
+        h.update(str(userpass[0]).encode("utf-8"))
         config['storkey'] = h.hexdigest()
         config["url"]["hosts"] = config["url"]["api"].format(baseurl=args.baseurl)
         for k in [ 'listage', 'hostage' ]:
@@ -612,6 +615,8 @@ class AgentConfig:
     def check_config(self):
         if self.config["monitoring_plugin"] == True:
             self.check_config_monitoring_plugin()
+        elif self.config["zabbix"] is not None:
+            self.check_config_zabbix()
             
     def check_config_monitoring_plugin(self):
         t_end = time.time()
@@ -633,6 +638,20 @@ class AgentConfig:
             output = f"query failed | duration={duration:.3f}s;;;;\nSpecify the host for which to query for updates with the CLI option --single-host."
             print(output)
             exit(3)
+    
+    def check_config_zabbix(self):
+        if self.config['baseurl'] is None:
+            output = f"ERROR: Specify the base URL for your patchmon server including the protocol ('http://' or 'https://'), but without the trailing slash with the CLI option --baseurl."
+            print(output)
+            exit(0)
+        if (self.config['secret'] is None and self.config['secret_id'] is None):
+            output = f"ERROR: Specify colon separated user:pass pair with the CLI option --secret."
+            print(output)
+            exit(0)
+        if self.config['cache'] is None:
+            output = f"ERROR: Specify a cache directory to store the host list and the patch states with the CLI option --cache."
+            print(output)
+            exit(0)
 
 
 def parse_uuid(raw: str) -> uuid.UUID | None:
