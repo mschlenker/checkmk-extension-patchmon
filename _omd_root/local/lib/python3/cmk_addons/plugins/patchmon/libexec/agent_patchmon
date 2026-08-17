@@ -191,9 +191,9 @@ class SingleHost:
         try:
             response = requests.get(url, auth=basic)
         except Exception as err:
-            gently_exit(error + str(err), conf)
+            gently_exit(error + str(err), self.config)
         if response.status_code > 200:
-            gently_exit(error + "Got status code: " + str(response.status_code), conf)
+            gently_exit(error + "Got status code: " + str(response.status_code), self.config)
         j = response.json()
         # print(j)
         return j
@@ -206,9 +206,9 @@ class SingleHost:
         try:
             response = requests.get(extraurl, auth=basic)
         except Exception as err:
-            gently_exit(error + str(err), conf)
+            gently_exit(error + str(err), self.config)
         if response.status_code > 200:
-            gently_exit(error + "Got status code: " + str(response.status_code), conf)
+            gently_exit(error + "Got status code: " + str(response.status_code), self.config)
         j = response.json()
         # print(j)
         return j
@@ -221,9 +221,9 @@ class SingleHost:
         try:
             response = requests.get(pkglisturl, auth=basic, params={"updates_only": "true"})
         except Exception as err:
-            gently_exit(error + str(err), conf)
+            gently_exit(error + str(err), self.config)
         if response.status_code > 200:
-            gently_exit(error + "Got status code: " + str(response.status_code), conf)
+            gently_exit(error + "Got status code: " + str(response.status_code), self.config)
         j = response.json()["packages"]
         plist = self.compare_pkglist(j, oldpackages)
         # print(plist)
@@ -353,9 +353,9 @@ class AllHosts:
             try:
                 response = requests.get(url, auth=basic)
             except Exception as err:
-                gently_exit(str(err), conf)
+                gently_exit(str(err), self.config)
             if response.status_code > 200:
-                gently_exit("Error retrieving host list. Got status code: " + str(response.status_code), conf)
+                gently_exit("Error retrieving host list. Got status code: " + str(response.status_code), self.config)
             hostlist = response.json()
             outdated = False
             self.storage.set_hostlist(hostlist)
@@ -658,24 +658,19 @@ def parse_uuid(raw: str) -> uuid.UUID | None:
 
 
 def gently_exit(error_msg, conf):
+    duration = time.time() - START_TIME
     if conf['monitoring_plugin'] == True:
-        output = f"ERROR | \n{error_msg}"
+        output = f"ERROR | duration={duration:.3f}s;;;;\n{error_msg}"
         print(output)
         exit(3)
-    agentstats = { "error": error_msg }
-    print('<<<patchmon_server>>>')
-    print(json.dumps(agentstats))
-    exit(0)
-
-
-def get_hostid(hostlist, args):
-    for host in hostlist['hosts']:
-        if args.name == "id" and host["id"] == args.single_host:
-            return host["id"]
-        elif args.name == "hostname" and host["hostname"] == args.single_host:
-            return host["id"]
-        elif host["friendly_name"] == args.single_host:
-            return host["id"]
+    elif conf['zabbix'] is not None:
+        print("ERROR: {error_msg}, took {duration:.3f}s, no data written to trap.")
+        exit(0)
+    else:
+        agentstats = { "error": error_msg }
+        print('<<<patchmon_server>>>')
+        print(json.dumps(agentstats))
+        exit(0)
 
 
 START_TIME = time.time()
