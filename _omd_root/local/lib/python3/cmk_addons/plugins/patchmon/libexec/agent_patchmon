@@ -301,7 +301,7 @@ class SingleHost:
                 now
             )
             if res.failed > 0:
-                print(f"Failed setting patchmon.updates for {h[conf['name']]}")
+                print(f"Failed setting patchmon.updates for {self.hostname}")
             res = sender.send_value(
                 self.hostname,
                 'patchmon.security_updates',
