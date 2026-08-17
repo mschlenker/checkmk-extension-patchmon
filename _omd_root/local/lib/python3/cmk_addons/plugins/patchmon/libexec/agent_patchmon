@@ -295,7 +295,7 @@ class SingleHost:
             print(f"Trying to set Zabbix items for {self.hostname}")
             sender = ZabbixSender(server=conf['zabbix'], port=conf['zabbix_port'])
             res = sender.send_value(
-                self.hostname, 
+                self.hostname,
                 'patchmon.updates',
                 self.hostdata['outdated_packages'],
                 now
@@ -303,9 +303,9 @@ class SingleHost:
             if res.failed > 0:
                 print(f"Failed setting patchmon.updates for {h[conf['name']]}")
             res = sender.send_value(
-                self.hostname, 
+                self.hostname,
                 'patchmon.security_updates',
-                self.host_data['security_updates'],
+                self.hostdata['security_updates'],
                 now
             )
             if res.failed > 0:
