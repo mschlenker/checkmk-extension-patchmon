@@ -289,47 +289,48 @@ class SingleHost:
             exit(0)
             
     def zabbix_send_traps(self):
+        if self.hostdata is None:
+            print(f"ERROR: No data for {self.hostname}")
+            return
         now = time.time()
         conf = self.config
-        try:
-            print(f"Trying to set Zabbix items for {self.hostname}")
-            sender = ZabbixSender(server=conf['zabbix'], port=conf['zabbix_port'])
+        print(f"Trying to set Zabbix items for {self.hostname}")
+        sender = ZabbixSender(server=conf['zabbix'], port=conf['zabbix_port'])
+        res = sender.send_value(
+            self.hostname,
+            'patchmon.updates',
+            self.hostdata['outdated_packages'],
+            now
+        )
+        if res.failed > 0:
+            print(f"Failed setting patchmon.updates for {self.hostname}")
+        res = sender.send_value(
+            self.hostname,
+            'patchmon.security_updates',
+            self.hostdata['security_updates'],
+            now
+        )
+        if res.failed > 0:
+            print(f"Failed setting patchmon.security_updates for {self.hostname}")
+        if "needs_reboot" in self.hostdata:
             res = sender.send_value(
-                self.hostname,
-                'patchmon.updates',
-                self.hostdata['outdated_packages'],
+                self.hostname, 
+                'patchmon.reboot',
+                self.hostdata['needs_reboot'],
                 now
             )
             if res.failed > 0:
-                print(f"Failed setting patchmon.updates for {self.hostname}")
-            res = sender.send_value(
-                self.hostname,
-                'patchmon.security_updates',
-                self.hostdata['security_updates'],
-                now
-            )
-            if res.failed > 0:
-                print(f"Failed setting patchmon.security_updates for {self.hostname}")
-            if "needs_reboot" in self.hostdata:
-                res = sender.send_value(
-                    self.hostname, 
-                    'patchmon.reboot',
-                    self.hostdata['needs_reboot'],
-                    now
-                )
-                if res.failed > 0:
-                    print(f"Failed setting patchmon.reboot for {self.hostname}")
-        except KeyError:
-            print(f"ERROR: No data for {self.hostname}")
+                print(f"Failed setting patchmon.reboot for {self.hostname}")
     
     def generate_checkmk_output(self):
         print('<<<patchmon_patches>>>')
-        try:
-            print(json.dumps(self.hostdata))
-            print('<<<labels:sep(0)>>>')
-            print('{"patchmon/monitored":"true"}')
-        except KeyError:
+        if self.hostdata is None:
             print('{ "error": "No data" }')
+            return
+        print(json.dumps(self.hostdata))
+        print('<<<labels:sep(0)>>>')
+        print('{"patchmon/monitored":"true"}')
+
 
 class AllHosts:
     def __init__(self, config, storage):
