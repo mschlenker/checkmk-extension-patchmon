@@ -706,21 +706,6 @@ def parse_uuid(raw: str) -> uuid.UUID | None:
         return None
 
 
-#~ def prepare_cache(keyid, args):
-    #~ # A directory is created for all cached data, the baseurl is sanitized from all slashes
-    #~ # to make sure no path traversal is possible
-    #~ h = hashlib.sha256()
-    #~ h.update(keyid.encode("utf-8"))
-    #~ sanitized_host = h.hexdigest()
-    #~ if args.cache:
-        #~ path = args.cache + "/" + sanitized_host
-    #~ else:
-        #~ path = os.environ['OMD_ROOT'] + "/tmp/patchmon/" + sanitized_host
-    #~ tmpdir = Path(path)
-    #~ tmpdir.mkdir(parents=True, exist_ok=True)
-    #~ return path
-
-
 def gently_exit(error_msg, conf):
     duration = time.time() - START_TIME
     if conf['monitoring_plugin'] == True:
