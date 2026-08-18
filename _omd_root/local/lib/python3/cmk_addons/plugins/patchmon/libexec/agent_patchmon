@@ -663,6 +663,10 @@ class AgentConfig:
             exit(3)
     
     def check_config_zabbix(self):
+        if NO_ZABBIX == True:
+            output = f"ERROR: The zabbix_utils package could not be imported. Use 'python3 -m pip install zabbix_utils' to install in your venv."
+            print(output)
+            exit(0)
         if self.config['baseurl'] is None:
             output = f"ERROR: Specify the base URL for your patchmon server including the protocol ('http://' or 'https://'), but without the trailing slash with the CLI option --baseurl."
             print(output)
