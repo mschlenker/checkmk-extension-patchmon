@@ -13,6 +13,7 @@ import random
 
 from pathlib import Path
 NO_CMK_STORAGE = False
+NO_ZABBIX = False
 
 # Make sure this script can be run from Checkmk 2.3.0 onwards and as active check without Checkmk APIs
 # The new password store API is available starting with 2.5.0
@@ -44,7 +45,7 @@ try:
     from zabbix_utils import Sender as ZabbixSender
 except ModuleNotFoundError:
     # Silently ignore
-    True
+    NO_ZABBIX = True
 
 
 class Storage:
@@ -148,13 +149,14 @@ class Storage:
 
 
 class SingleHost:
-    def __init__(self, config, storage, hostid, hostname):
+    def __init__(self, config, storage, hostid, hostname, session):
         self.config = config
         self.storage = storage
         self.hostid = hostid
         self.hostname = hostname
         self.hosturl = None
         self.hostdata = None
+        self.session = session
         self.populate()
     
     def populate(self):
@@ -196,7 +198,9 @@ class SingleHost:
         basic = requests.auth.HTTPBasicAuth(self.config['pmuser'], self.config['pmpass'])
         url = self.config['url']['stats'].format(baseurl=self.config['baseurl'], uuid=self.hostid)
         try:
-            response = requests.get(url, auth=basic)
+            if self.session is None:
+                self.session = requests.Session()
+            response = self.session.get(url, auth=basic)
         except Exception as err:
             gently_exit(error + str(err), self.config)
         if response.status_code > 200:
@@ -211,7 +215,9 @@ class SingleHost:
         basic = requests.auth.HTTPBasicAuth(self.config['pmuser'], self.config['pmpass'])
         extraurl = self.config['url']['extra'].format(baseurl=self.config['baseurl'], uuid=self.hostid)
         try:
-            response = requests.get(extraurl, auth=basic)
+            if self.session is None:
+                self.session = requests.Session()
+            response = self.session.get(extraurl, auth=basic)
         except Exception as err:
             gently_exit(error + str(err), self.config)
         if response.status_code > 200:
@@ -226,7 +232,9 @@ class SingleHost:
         basic = requests.auth.HTTPBasicAuth(self.config['pmuser'], self.config['pmpass'])
         pkglisturl = self.config['url']['pkglist'].format(baseurl=self.config['baseurl'], uuid=self.hostid)
         try:
-            response = requests.get(pkglisturl, auth=basic, params={"updates_only": "true"})
+            if self.session is None:
+                self.session = requests.Session()
+            response = self.session.get(pkglisturl, auth=basic, params={"updates_only": "true"})
         except Exception as err:
             gently_exit(error + str(err), self.config)
         if response.status_code > 200:
@@ -346,6 +354,7 @@ class AllHosts:
         self.hostdata = {}
         self.storage = storage
         self.config = config
+        self.session = None
         self.get_hostlist()
         if self.config["single_host"] is not None:
             self.narrow_down_hostlist()
@@ -358,7 +367,9 @@ class AllHosts:
             if self.config['debug']: print(f"Hostlist outdated or not existing, query from: {url}")
             basic = requests.auth.HTTPBasicAuth(self.config['pmuser'], self.config['pmpass'])
             try:
-                response = requests.get(url, auth=basic)
+                if self.session is None:
+                    self.session = requests.Session()
+                response = self.session.get(url, auth=basic)
             except Exception as err:
                 gently_exit(str(err), self.config)
             if response.status_code > 200:
@@ -383,7 +394,10 @@ class AllHosts:
     
     def get_all_hostdata(self):
         for host in self.hostlist["hosts"]:
-            self.hostdata[host["id"]] = SingleHost(self.config, self.storage, host["id"], host[self.config["name"]])
+            self.hostdata[host["id"]] = SingleHost(self.config, self.storage, host["id"], host[self.config["name"]], self.session)
+            if self.hostdata[host["id"]].session is not None:
+                if self.session is None:
+                    self.session = self.hostdata[host["id"]].session
             
     def generate_output(self):
         if self.config['no_output'] == True:
