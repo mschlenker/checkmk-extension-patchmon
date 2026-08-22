@@ -95,7 +95,7 @@ class Storage:
             if jstr:
                 hostlist = json.loads(jstr)
                 if 'mtime' in hostlist:
-                    if time.time() - hostlist['mtime'] < maxage:
+                    if time.time() - hostlist['mtime'] < self.config['listage']:
                         outdated = False
         return hostlist, outdated
         
@@ -131,7 +131,7 @@ class Storage:
                 if jstr:
                     hostdata = json.loads(jstr)
                     if 'mtime' in hostdata:
-                        if time.time() - hostdata['mtime'] < maxage:
+                        if time.time() - hostdata['mtime'] < self.config['hostage']:
                             outdated = False
         return hostdata, outdated
 
