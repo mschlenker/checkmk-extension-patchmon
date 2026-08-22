@@ -91,7 +91,7 @@ class Storage:
                 if time.time() - os.path.getmtime(listfile) < self.config['listage']:
                     outdated = False
         else:
-            jstr = storage.read("hostlist", None)
+            jstr = self.cmkstorage.read("hostlist", None)
             if jstr:
                 hostlist = json.loads(jstr)
                 if mtime in hostlist:
@@ -108,7 +108,7 @@ class Storage:
         else:
             hostlist['mtime'] = time.time()
             self.cmkstorage.unset("hostlist")
-            self.storage.write("hostlist", json.dumps(hostlist))
+            self.cmkstorage.write("hostlist", json.dumps(hostlist))
         
     def get_host(self, hostid):
         hostdata = None
@@ -127,7 +127,7 @@ class Storage:
                     if time.time() - os.path.getmtime(hostfile) < self.config['hostage']:
                         outdated = False
             else:
-                jstr = storage.read(hostid, None)
+                jstr = self.cmkstorage.read(hostid, None)
                 if jstr:
                     hostlist = json.loads(jstr)
                     if mtime in hostlist:
@@ -145,7 +145,7 @@ class Storage:
                     file.write(json.dumps(hostdata))
             else:
                 self.cmkstorage.unset(hostid)
-                self.storage.write(hostid, json.dumps(hostdata))
+                self.cmkstorage.write(hostid, json.dumps(hostdata))
 
 
 class SingleHost:
