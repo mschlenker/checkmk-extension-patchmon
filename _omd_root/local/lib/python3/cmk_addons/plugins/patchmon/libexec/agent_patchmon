@@ -596,9 +596,9 @@ class AgentConfig:
         args = self.get_cli_arguments()
         # Create config for regular arguments
         if args.monitoring_plugin: config['monitoring_plugin'] = True
-        if args.maxexec: config['maxexec'] = int(args.maxexec)
-        if args.list: config['listage'] = int(args.list)
-        if args.check: config['hostage'] = int(args.check)
+        if args.maxexec: config['maxexec'] = int(float(args.maxexec))
+        if args.list: config['listage'] = int(float(args.list))
+        if args.check: config['hostage'] = int(float(args.check))
         if args.baseurl: config['baseurl'] = args.baseurl
         if args.secret: config['secret'] = args.secret
         if args.secret_id: config['secret_id'] = args.secret_id
