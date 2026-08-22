@@ -94,7 +94,7 @@ class Storage:
             jstr = self.cmkstorage.read("hostlist", None)
             if jstr:
                 hostlist = json.loads(jstr)
-                if mtime in hostlist:
+                if 'mtime' in hostlist:
                     if time.time() - hostlist['mtime'] < maxage:
                         outdated = False
         return hostlist, outdated
@@ -123,15 +123,15 @@ class Storage:
                             hostdata = json.loads(c)
                         except json.decoder.JSONDecodeError:
                             if self.config['debug']: print(f"Invalid JSON for hostdata: {hostfile}")
-                            hostlist = None
+                            hostdata = None
                     if time.time() - os.path.getmtime(hostfile) < self.config['hostage']:
                         outdated = False
             else:
                 jstr = self.cmkstorage.read(hostid, None)
                 if jstr:
-                    hostlist = json.loads(jstr)
-                    if mtime in hostlist:
-                        if time.time() - hostlist['mtime'] < maxage:
+                    hostdata = json.loads(jstr)
+                    if 'mtime' in hostdata:
+                        if time.time() - hostdata['mtime'] < maxage:
                             outdated = False
         return hostdata, outdated
 
