@@ -373,7 +373,7 @@ class AllHosts:
             except Exception as err:
                 gently_exit(str(err), self.config)
             if response.status_code > 200:
-                gently_exit("Error retrieving host list. Got status code: " + str(response.status_code), self.config)
+                gently_exit("Error retrieving host list. Got status code: " + str(response.status_code) + ". When on Checkmk lower than 2.5.0, please use the password store!", self.config)
             hostlist = response.json()
             outdated = False
             self.storage.set_hostlist(hostlist)
@@ -575,9 +575,11 @@ class AgentConfig:
             # We have Checkmk 2.4 or 2.3 where the password store is an internal API
             # Here we have to differentiate between the two possible parameters
             if args.secret_id:
+                # store_reference, store_path = args.secret_id.split(":")
                 store_reference = args.secret_id.split(":")[0]
                 try:
                     userpass = cmk_legacy_pw_store.lookup(cmk_legacy_pw_store.password_store_path(), store_reference).split(":")
+                    # userpass = cmk_legacy_pw_store.lookup(store_path, store_reference).split(":")
                     return userpass
                 except:
                     # Either the lookup failed (Checkmk 2.3 and explicit password) or the legacy_pw_store is not available.
