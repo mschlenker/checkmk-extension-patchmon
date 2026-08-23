@@ -577,12 +577,12 @@ class AgentConfig:
             if args.secret_id:
                 store_reference = args.secret_id.split(":")[0]
                 try:
-                    userpass = legacy_pw_store.lookup(legacy_pw_store.password_store_path(), store_reference).split(":")
+                    userpass = cmk_legacy_pw_store.lookup(cmk_legacy_pw_store.password_store_path(), store_reference).split(":")
                     return userpass
                 except:
                     # Either the lookup failed (Checkmk 2.3 and explicit password) or the legacy_pw_store is not available.
                     # In such cases, assume that a plain password was passed
-                    userpass = args.secret_id.split(":")[0]
+                    userpass = args.secret_id.split(":")
                     return userpass
             else:
                 try:
