@@ -12,9 +12,9 @@ def command_function(params, host_config):
         "--check", str(float(params['checkinterval'])),
         "--maxexec", str(float(params['maxexec'])),
     ]
-    if params["reboot"]:
+    if "reboot" in params:
         args.append("--reboot")
-    if params["grace"]:
+    if "grace" in params:
         args.append("--grace")
     yield SpecialAgentCommand(command_arguments=args)
 
