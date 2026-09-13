@@ -12,10 +12,12 @@ def command_function(params, host_config):
         "--check", str(float(params['checkinterval'])),
         "--maxexec", str(float(params['maxexec'])),
     ]
-    if "reboot" in params:
+    if "reboot" in params and params["reboot"] == True:
         args.append("--reboot")
-    if "grace" in params:
+    if "grace" in params and params["grace"] == True:
         args.append("--grace")
+    if "ignore_ssl" in params and params["ignore_ssl"] == True:
+        args.append("--ignore-cert")
     yield SpecialAgentCommand(command_arguments=args)
 
 special_agent_ometemp = SpecialAgentConfig(

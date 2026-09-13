@@ -24,8 +24,23 @@ from cmk.rulesets.v1.rule_specs import (
 )
 from cmk.rulesets.v1 import Label
 
+def _fill_default_values(param):
+    if "ignore_ssl" not in param:
+        param["ignore_ssl"] = False
+    if "reboot" not in param:
+        param["reboot"] = False
+    if "grace" not in param:
+        param["grace"] = False
+    # These top level keys might affect some 0.2 to 0.3 upgrades, just remove them:
+    #if "grace_normal" in param:
+    #    param.pop("grace_normal")
+    #if "grace_security" in param:
+    #    param.pop("grace_security")
+    return param
+
 def _formspec():
     return Dictionary(
+        migrate = _fill_default_values,
         title=Title("PatchMon connection"),
         help_text=Help(
             "Retrieve update information from a PatchMon server and create piggyback data from it."
@@ -38,6 +53,19 @@ def _formspec():
                     help_text=Help(
                         "Specify the absolute URL of the PatchMon server queried including the "
                         "protocol http:// or https://. Trailing slashes can be omitted."
+                    ),
+                ),
+            ),
+            "ignore_ssl": DictElement(
+                required=True,
+                parameter_form=BooleanChoice(
+                    title=Title("SSL certificate handling"),
+                    label=Label("Ignore certificate errors (unsafe, not recommended)"),
+                    help_text=Help(
+                        "Set this option to ignore all certificate errors like name mismatch, "
+                        "expired certificates or root certificates not yet included in the "
+                        "certificate bundle. Use with caution since this option facilitates "
+                        "machine-in-the-middle attacks!"
                     ),
                 ),
             ),
@@ -125,7 +153,7 @@ def _formspec():
                 ),
             ),
             "reboot": DictElement(
-                required=False,
+                required=True,
                 parameter_form=BooleanChoice(
                     title=Title("Reboot info"),
                     label=Label("Query if reboot is necessary"),
@@ -138,7 +166,7 @@ def _formspec():
                 ),
             ),
             "grace": DictElement(
-                required=False,
+                required=True,
                 parameter_form=BooleanChoice(
                     title=Title("Package list for grace periods"),
                     label=Label("Query the package list as well"),

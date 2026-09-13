@@ -12,6 +12,10 @@ import uuid
 import random
 
 from pathlib import Path
+from requests.packages.urllib3.exceptions import InsecureRequestWarning
+# Suppress only the single warning from urllib3
+requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
 NO_CMK_STORAGE = False
 NO_ZABBIX = False
 
@@ -200,7 +204,12 @@ class SingleHost:
         try:
             if self.session is None:
                 self.session = requests.Session()
-            response = self.session.get(url, auth=basic)
+                if self.config['ignore_cert'] == True:
+                    self.session.verify = False
+            if self.config['ignore_cert'] == True:
+                response = self.session.get(url, auth=basic, verify=False)
+            else:
+                response = self.session.get(url, auth=basic)
         except Exception as err:
             gently_exit(error + str(err), self.config)
         if response.status_code > 200:
@@ -217,7 +226,12 @@ class SingleHost:
         try:
             if self.session is None:
                 self.session = requests.Session()
-            response = self.session.get(extraurl, auth=basic)
+                if self.config['ignore_cert'] == True:
+                    self.session.verify = False
+            if self.config['ignore_cert'] == True:
+                response = self.session.get(extraurl, auth=basic, verify=False)
+            else:
+                response = self.session.get(extraurl, auth=basic)
         except Exception as err:
             gently_exit(error + str(err), self.config)
         if response.status_code > 200:
@@ -234,7 +248,12 @@ class SingleHost:
         try:
             if self.session is None:
                 self.session = requests.Session()
-            response = self.session.get(pkglisturl, auth=basic, params={"updates_only": "true"})
+                if self.config['ignore_cert'] == True:
+                    self.session.verify = False
+            if self.config['ignore_cert'] == True:
+                response = self.session.get(pkglisturl, auth=basic, params={"updates_only": "true"}, verify=False)
+            else:
+                response = self.session.get(pkglisturl, auth=basic, params={"updates_only": "true"})
         except Exception as err:
             gently_exit(error + str(err), self.config)
         if response.status_code > 200:
@@ -369,7 +388,12 @@ class AllHosts:
             try:
                 if self.session is None:
                     self.session = requests.Session()
-                response = self.session.get(url, auth=basic)
+                    if self.config['ignore_cert'] == True:
+                        self.session.verify = False
+                if self.config['ignore_cert'] == True:
+                    response = self.session.get(url, auth=basic, verify=False)
+                else:
+                    response = self.session.get(url, auth=basic)
             except Exception as err:
                 gently_exit(str(err), self.config)
             if response.status_code > 200:
@@ -457,6 +481,7 @@ class AgentConfig:
             'debug': False,
             'no_output': False,
             'only_reboot': False,
+            'ignore_cert': False,
             'url' : {
                 "api": "{baseurl}/api/v1/api/hosts",
                 "host": "{baseurl}/hosts/{uuid}",
@@ -475,6 +500,11 @@ class AgentConfig:
             "--baseurl",
             help="Specify the baseurl for your PatchMon installation.",
         )
+        parser.add_argument(
+            "--ignore-cert",
+            help="Skip SSL certificate validation. Use with caution since this option facilitates machine-in-the-middle attacks!",
+            action="store_true",
+        ),
         parser.add_argument(
             "--name",
             help="Chose whether 'id', 'hostname' or 'friendly_name' should be used to create hostname. Default is 'friendly_name'.",
@@ -598,6 +628,7 @@ class AgentConfig:
         args = self.get_cli_arguments()
         # Create config for regular arguments
         if args.monitoring_plugin: config['monitoring_plugin'] = True
+        if args.ignore_cert: config['ignore_cert'] = True
         if args.maxexec: config['maxexec'] = int(float(args.maxexec))
         if args.list: config['listage'] = int(float(args.list))
         if args.check: config['hostage'] = int(float(args.check))
