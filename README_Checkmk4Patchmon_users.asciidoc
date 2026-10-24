@@ -18,12 +18,12 @@ Click it and _activate pending changes_ before proceeding.
 
 Start with a Checkmk site.
 Following the link:https://docs.checkmk.com/latest/en/intro_setup.html[beginner's guide in the Official Checkmk User Guide^] probably is the best way to go.
-I'd recommend to go with either Checkmk Raw (the Open Source edition) or the forever-free up to 750 services Checkmk Cloud.
-The most important difference for PatchMon users might be that the Open Source Checkmk Raw only supports pull mode for agents out of the box while Cloud also accepts push.
+I'd recommend to go with either Checkmk Community (the Open Source edition) or the forever-free up to 750 services Checkmk Ultimate (you'll typically monitor 25 to 50 services per Linux server).
+The most important difference for PatchMon users might be that the Open Source Checkmk Community only supports pull mode for agents out of the box while Ultimate also accepts push.
 However, this can be easily navigated around if necessary (I'll write a separate article on _poor people's push_ later).
 
 Currently, running Patchmon and Checkmk on a single server requires a bit of plumbing because both want to use the default HTTP(S) ports.
-More on that later.
+More on that later (or just message me).
 Make sure to add the Checkmk server as first host to be monitored.
 
 === Create folders
