@@ -356,6 +356,32 @@ class SingleHost:
             if res.failed > 0:
                 print(f"Failed setting patchmon.reboot for {self.hostname}")
     
+    def generate_command_output(self, outhandle):
+        t_now = int(time.time())
+        host_data = self.hostdata
+        conf = self.config
+        if 'needs_reboot' in host_data:
+            # outhandle = open(self.config['command_file'], "w")
+            if host_data['needs_reboot'] > 0:
+                state = self.config['states'][2]
+                outhandle.write(f"[{t_now}] PROCESS_SERVICE_CHECK_RESULT;{self.hostname};PatchMon reboot required;{state};Reboot required.\n")
+            else:
+                outhandle.write(f"[{t_now}] PROCESS_SERVICE_CHECK_RESULT;{self.hostname};PatchMon reboot required;0;No reboot required.\n")
+            # outhandle.close()
+        packages_outdated = self.hostdata['outdated_packages']
+        packages_security = self.hostdata['security_updates']
+        # outhandle = open(self.config['command_file'], "w")
+        if host_data['security_updates'] > 0:
+            state = self.config['states'][0]
+            outhandle.write(f"[{t_now}] PROCESS_SERVICE_CHECK_RESULT;{self.hostname};PatchMon patches;{state};{packages_security} security updates are missing ({packages_outdated} in total). | {packages_outdated=};;;; {packages_security=};;;;\n")
+        elif host_data['outdated_packages'] > 0:
+            state = self.config['states'][1]
+            outhandle.write(f"[{t_now}] PROCESS_SERVICE_CHECK_RESULT;{self.hostname};PatchMon patches;{state};{packages_outdated} updates are missing. | {packages_outdated=};;;; {packages_security=};;;;\n")
+        else:
+            state = 0
+            outhandle.write(f"[{t_now}] PROCESS_SERVICE_CHECK_RESULT;{self.hostname};PatchMon patches;{state};No updates are missing. | {packages_outdated=};;;; {packages_security=};;;;\n")
+        # outhandle.close()
+    
     def generate_checkmk_output(self):
         print('<<<patchmon_patches>>>')
         if self.hostdata is None:
@@ -431,6 +457,8 @@ class AllHosts:
         elif self.config['zabbix'] is not None:
             for host in self.hostlist["hosts"]:
                 self.hostdata[host["id"]].zabbix_send_traps()
+        elif self.config['command'] == True:
+            self.generate_command_output()
         else:
             self.generate_checkmk_output()
             
@@ -443,6 +471,16 @@ class AllHosts:
             print(output)
             exit(3)
             
+    # Generate output to write to the Nagios command file. Use on Icinga, Nagios, Naemon.
+    # Do not use on Nagios 3 (Checkmk Community), because the command file has serious
+    # bugs there (4096 byte buffer, writing down to spool and read by reaper later...).
+    
+    def generate_command_output(self):
+        outhandle = open(self.config['command_file'], "w")
+        for h in self.hostlist['hosts']:
+            self.hostdata[h["id"]].generate_command_output(outhandle)
+        outhandle.close()
+
     def generate_checkmk_output(self):
         for h in self.hostlist['hosts']:
             if self.config['single_host'] is None: print('<<<<' + self.hostdata[h["id"]].hostname + '>>>>')
@@ -475,6 +513,8 @@ class AgentConfig:
             'monitoring_plugin': False,
             'zabbix': None,
             'zabbix_port': 10051,
+            'command': False,
+            'command_file': None,
             'reboot': False,
             'grace': False,
             'no_output': False,
@@ -544,6 +584,10 @@ class AgentConfig:
         parser.add_argument(
             "--port",
             help="Use together with --zabbix to specify the trapper port. If no port is specified, the default (10051) is used.",
+        ),
+        parser.add_argument(
+            "--command-file",
+            help="Specify a Nagios compatible command file. The script will then write data for the services 'PatchMon patches' and 'Patchmon reboot required' to this command file."
         ),
         parser.add_argument(
             "--only-reboot",
@@ -639,6 +683,9 @@ class AgentConfig:
         if args.cache: config['cache'] = args.cache
         if args.single_host: config['single_host'] = args.single_host
         if args.zabbix: config['zabbix'] = args.zabbix
+        if args.command_file:
+            config['command'] = True
+            config['command_file'] = args.command_file
         if args.debug: config['debug'] = args.debug
         if args.no_output: config['no_output'] = args.no_output
         if args.port: config['port'] = 10051
