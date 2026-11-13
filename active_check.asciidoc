@@ -36,6 +36,7 @@ When writing to a Nagios command file, only one process is needed and all data r
 
 For this reason, use the Nagios command file if supported by your monitoring system.
 Specify the path to the command file to trigger this behavior.
+The services "PatchMon reboot required" and "PatchMon patches" have to exist and allow passive submission.
 
 Here, we specify caching of the host list for one hour (3600 seconds) and the patch and reboot information for 10 minutes (600 seconds).
 The list of states is for missing security updates (default: 2, aka CRIT), missing normal updates (default: 1, aka WARN) and a required reboot (default: 2).
