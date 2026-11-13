@@ -1,10 +1,11 @@
 // encoding: utf-8
-= Active check mode
+= Nagios command writer, active check mode and Zabbix trap sender
 
-The core script can generate output as specified by link:https://www.monitoring-plugins.org/doc/guidelines.html#PLUGOUTPUT[monitoring plugins^].
-In this case, manual installation and configuration is needed.
-
+The core script can also generate Nagios command file compatible output.
+This is compatible to Icinga, Nagios and Naemon and performs much better than active check mode which is also supported.
 Another switch can be used to generate traps for the Zabbix trapper.
+
+In these cases, manual installation and configuration is needed.
 
 If someone wants to provide templates for some of the non-Checkmk monitoring system, please create a GitHub issue with an attachment.
 
@@ -28,13 +29,42 @@ If you are using Zabbix, create a `venv` and install the link:https://github.com
 (venv) monitoring $ python3 -m pip install zabbix_utils
 ----
 
+== Writing to a Icinga/Nagios/Naemon command file
+
+Running as xref:active_check[active check] is very inefficient due to a process being spawned for each service of each host.
+When writing to a Nagios command file, only one process is needed and all data received from the PatchMon server is written in a single open/close event.
+
+For this reason, use the Nagios command file if supported by your monitoring system.
+Specify the path to the command file to trigger this behavior.
+
+Here, we specify caching of the host list for one hour (3600 seconds) and the patch and reboot information for 10 minutes (600 seconds).
+The list of states is for missing security updates (default: 2, aka CRIT), missing normal updates (default: 1, aka WARN) and a required reboot (default: 2).
+The host should be identified by it's `friendly_name`.
+
+[source,console,subs="attributes+"]
+----
+monitoring $ check_patchmon --baseurl https://patchmon.mydomain.test \
+    --name friendly_name \
+    --check 600 \
+    --list 3600 \
+    --states 2,1,2 \
+    --secret 'patchmon_ae_decafbad:deadbeef' \
+    --cache /tmp/agent_patchmon \
+    --command ./tmp/run/nagios.cmd \
+    --reboot \
+    --debug
+----
+
+Run as a cron job with reasonable intervals.
+
+[#active_check]
 == Invocation as monitoring plug-in
+
+The core script can generate output as specified by link:https://www.monitoring-plugins.org/doc/guidelines.html#PLUGOUTPUT[monitoring plugins^].
 
 Running as active check requires passing the host name, which type of name (default is 'friendly_name') should be applied to identify the host and the parameter `--monitoring-plugin`.
 
-Here, we specify caching of the host list for one hour (3600 seconds) and the patch and reboot information for 20 minutes (1200 seconds).
-The list of states is for missing security updates (default: 2, aka CRIT), missing normal updates (default: 1, aka WARN) and a required reboot (default: 2).
-The host should be identified by it's `friendly_name`.
+Use this only on monitoring systems like LibreNMS that support active checks, but no command file.
 
 [source,console,subs="attributes+"]
 ----
